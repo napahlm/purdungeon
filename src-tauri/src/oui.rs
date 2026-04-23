@@ -1,4 +1,4 @@
-﻿use std::collections::HashMap;
+use std::collections::HashMap;
 use std::sync::LazyLock;
 
 static OUI_TOML: &str = include_str!("../oui.toml");

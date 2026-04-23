@@ -1,7 +1,7 @@
 {
-  "productName": "taploot",
+  "productName": "coil-sniffer",
   "version": "0.1.0",
-  "identifier": "com.taploot.app",
+  "identifier": "com.coilsniffer.app",
   "build": {
     "beforeDevCommand": "pnpm dev:vite",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
     "withGlobalTauri": false,
     "windows": [
       {
-        "title": "taploot",
+        "title": "coil-sniffer",
         "width": 1280,
         "height": 800,
         "minWidth": 800,

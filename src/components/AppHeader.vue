@@ -34,7 +34,7 @@ function closeInvestigation() {
 <template>
   <header class="flex h-10 shrink-0 items-center justify-between border-b border-border bg-bg-secondary px-4">
     <div class="flex items-center gap-4">
-      <span class="text-sm font-bold tracking-wider text-accent">taploot</span>
+      <span class="text-sm font-bold tracking-wider text-accent">coil-sniffer</span>
       <div class="flex items-center gap-1">
         <button
           class="rounded px-2 py-0.5 text-xs text-text-secondary transition-colors hover:bg-bg-elevated hover:text-text-primary"

@@ -13,18 +13,18 @@ use crate::commands::import::ImportResult;
 use crate::db::{queries, schema};
 use crate::oui;
 use crate::protocols::modbus;
-use crate::TaplootError;
+use crate::CoilSnifferError;
 
 pub fn parse_pcap(
     path: &Path,
     db: &Arc<Mutex<rusqlite::Connection>>,
     progress: &AtomicU64,
-) -> Result<ImportResult, TaplootError> {
+) -> Result<ImportResult, CoilSnifferError> {
     let mut file = File::open(path)?;
     let mut buf = Vec::new();
     file.read_to_end(&mut buf)?;
 
-    let conn = db.lock().map_err(|e| TaplootError::Parse(e.to_string()))?;
+    let conn = db.lock().map_err(|e| CoilSnifferError::Parse(e.to_string()))?;
 
     // Clear stale data and drop indexes for fast bulk insert
     schema::clear_data(&conn)?;
@@ -41,7 +41,7 @@ pub fn parse_pcap(
 
     if buf.len() < 4 {
         conn.execute_batch("ROLLBACK")?;
-        return Err(TaplootError::Parse("file too small".into()));
+        return Err(CoilSnifferError::Parse("file too small".into()));
     }
 
     let magic = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
@@ -92,9 +92,9 @@ fn parse_pcapng_data(
     min_ts: &mut f64,
     max_ts: &mut f64,
     progress: &AtomicU64,
-) -> Result<(), TaplootError> {
+) -> Result<(), CoilSnifferError> {
     let mut reader = PcapNGReader::new(65536, std::io::Cursor::new(data))
-        .map_err(|e| TaplootError::Parse(format!("pcapng reader: {e}")))?;
+        .map_err(|e| CoilSnifferError::Parse(format!("pcapng reader: {e}")))?;
 
     let mut if_info: Vec<(u64, u64)> = Vec::new();
 
@@ -133,9 +133,9 @@ fn parse_pcapng_data(
             Err(PcapError::Incomplete(_)) => {
                 reader
                     .refill()
-                    .map_err(|e| TaplootError::Parse(format!("refill: {e}")))?;
+                    .map_err(|e| CoilSnifferError::Parse(format!("refill: {e}")))?;
             }
-            Err(e) => return Err(TaplootError::Parse(format!("pcapng: {e}"))),
+            Err(e) => return Err(CoilSnifferError::Parse(format!("pcapng: {e}"))),
         }
     }
     Ok(())
@@ -151,9 +151,9 @@ fn parse_legacy_data(
     min_ts: &mut f64,
     max_ts: &mut f64,
     progress: &AtomicU64,
-) -> Result<(), TaplootError> {
+) -> Result<(), CoilSnifferError> {
     let mut reader = LegacyPcapReader::new(65536, std::io::Cursor::new(data))
-        .map_err(|e| TaplootError::Parse(format!("pcap reader: {e}")))?;
+        .map_err(|e| CoilSnifferError::Parse(format!("pcap reader: {e}")))?;
 
     loop {
         match reader.next() {
@@ -172,9 +172,9 @@ fn parse_legacy_data(
             Err(PcapError::Incomplete(_)) => {
                 reader
                     .refill()
-                    .map_err(|e| TaplootError::Parse(format!("refill: {e}")))?;
+                    .map_err(|e| CoilSnifferError::Parse(format!("refill: {e}")))?;
             }
-            Err(e) => return Err(TaplootError::Parse(format!("pcap: {e}"))),
+            Err(e) => return Err(CoilSnifferError::Parse(format!("pcap: {e}"))),
         }
     }
     Ok(())
@@ -190,7 +190,7 @@ fn process_packet(
     packet_count: &mut usize,
     min_ts: &mut f64,
     max_ts: &mut f64,
-) -> Result<(), TaplootError> {
+) -> Result<(), CoilSnifferError> {
     let Ok(parsed) = etherparse::SlicedPacket::from_ethernet(data) else {
         return Ok(());
     };
@@ -296,7 +296,7 @@ fn upsert_host(
     ip: &str,
     mac: &str,
     timestamp: f64,
-) -> Result<i64, TaplootError> {
+) -> Result<i64, CoilSnifferError> {
     if let Some(&id) = host_map.get(ip) {
         conn.prepare_cached(
             "UPDATE hosts SET

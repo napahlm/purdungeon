@@ -2,7 +2,7 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::db::queries;
-use crate::{AppState, TaplootError};
+use crate::{AppState, CoilSnifferError};
 
 #[derive(Debug, Serialize)]
 pub struct Host {
@@ -67,31 +67,31 @@ pub struct Packet {
 
 fn get_db(
     state: &State<'_, AppState>,
-) -> Result<std::sync::Arc<std::sync::Mutex<rusqlite::Connection>>, TaplootError> {
+) -> Result<std::sync::Arc<std::sync::Mutex<rusqlite::Connection>>, CoilSnifferError> {
     state.get_conn()
 }
 
 #[allow(clippy::needless_pass_by_value)]
 #[tauri::command]
-pub fn get_hosts(state: State<'_, AppState>) -> Result<Vec<Host>, TaplootError> {
+pub fn get_hosts(state: State<'_, AppState>) -> Result<Vec<Host>, CoilSnifferError> {
     let db = get_db(&state)?;
-    let conn = db.lock().map_err(|e| TaplootError::Parse(e.to_string()))?;
+    let conn = db.lock().map_err(|e| CoilSnifferError::Parse(e.to_string()))?;
     queries::get_all_hosts(&conn)
 }
 
 #[allow(clippy::needless_pass_by_value)]
 #[tauri::command]
-pub fn get_connections(state: State<'_, AppState>) -> Result<Vec<Connection>, TaplootError> {
+pub fn get_connections(state: State<'_, AppState>) -> Result<Vec<Connection>, CoilSnifferError> {
     let db = get_db(&state)?;
-    let conn = db.lock().map_err(|e| TaplootError::Parse(e.to_string()))?;
+    let conn = db.lock().map_err(|e| CoilSnifferError::Parse(e.to_string()))?;
     queries::get_all_connections(&conn)
 }
 
 #[allow(clippy::needless_pass_by_value)]
 #[tauri::command]
-pub fn get_time_range(state: State<'_, AppState>) -> Result<(f64, f64), TaplootError> {
+pub fn get_time_range(state: State<'_, AppState>) -> Result<(f64, f64), CoilSnifferError> {
     let db = get_db(&state)?;
-    let conn = db.lock().map_err(|e| TaplootError::Parse(e.to_string()))?;
+    let conn = db.lock().map_err(|e| CoilSnifferError::Parse(e.to_string()))?;
     queries::get_time_range(&conn)
 }
 
@@ -102,9 +102,9 @@ pub fn save_node_position(
     x: f64,
     y: f64,
     state: State<'_, AppState>,
-) -> Result<(), TaplootError> {
+) -> Result<(), CoilSnifferError> {
     let db = get_db(&state)?;
-    let conn = db.lock().map_err(|e| TaplootError::Parse(e.to_string()))?;
+    let conn = db.lock().map_err(|e| CoilSnifferError::Parse(e.to_string()))?;
     queries::save_node_position(&conn, host_id, x, y)
 }
 
@@ -113,9 +113,9 @@ pub fn save_node_position(
 pub fn get_host_detail(
     host_id: i64,
     state: State<'_, AppState>,
-) -> Result<HostDetail, TaplootError> {
+) -> Result<HostDetail, CoilSnifferError> {
     let db = get_db(&state)?;
-    let conn = db.lock().map_err(|e| TaplootError::Parse(e.to_string()))?;
+    let conn = db.lock().map_err(|e| CoilSnifferError::Parse(e.to_string()))?;
     queries::get_host_detail(&conn, host_id)
 }
 
@@ -125,8 +125,8 @@ pub fn get_connection_packets(
     connection_id: i64,
     limit: i64,
     state: State<'_, AppState>,
-) -> Result<Vec<Packet>, TaplootError> {
+) -> Result<Vec<Packet>, CoilSnifferError> {
     let db = get_db(&state)?;
-    let conn = db.lock().map_err(|e| TaplootError::Parse(e.to_string()))?;
+    let conn = db.lock().map_err(|e| CoilSnifferError::Parse(e.to_string()))?;
     queries::get_connection_packets(&conn, connection_id, limit)
 }

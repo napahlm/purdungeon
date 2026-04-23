@@ -1,4 +1,4 @@
-# taploot
+# coil-sniffer
 
 Offline desktop tool for OT/ICS network analysis. Drop a pcap file, get a network topology canvas and communication timeline. Think of it as a modern, open-source take on GrassMarlin.
 

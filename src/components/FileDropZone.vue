@@ -66,7 +66,7 @@ onUnmounted(() => {
       </svg>
 
       <div class="text-center">
-        <h1 class="mb-2 text-2xl font-bold text-accent">taploot</h1>
+        <h1 class="mb-2 text-2xl font-bold text-accent">coil-sniffer</h1>
         <p class="text-text-secondary">drop a .pcap file here</p>
         <p class="mt-1 text-sm text-text-muted">or</p>
       </div>

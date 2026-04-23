@@ -8,7 +8,7 @@ mod protocols;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-pub use error::TaplootError;
+pub use error::CoilSnifferError;
 
 pub struct DbHandle {
     pub conn: Arc<Mutex<rusqlite::Connection>>,
@@ -26,11 +26,11 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn get_conn(&self) -> Result<Arc<Mutex<rusqlite::Connection>>, TaplootError> {
-        let lock = self.db.lock().map_err(|e| TaplootError::Parse(e.to_string()))?;
+    pub fn get_conn(&self) -> Result<Arc<Mutex<rusqlite::Connection>>, CoilSnifferError> {
+        let lock = self.db.lock().map_err(|e| CoilSnifferError::Parse(e.to_string()))?;
         lock.as_ref()
             .map(|h| Arc::clone(&h.conn))
-            .ok_or_else(|| TaplootError::Parse("no database loaded".into()))
+            .ok_or_else(|| CoilSnifferError::Parse("no database loaded".into()))
     }
 }
 
@@ -50,5 +50,5 @@ pub fn run() {
             commands::query::get_connection_packets,
         ])
         .run(tauri::generate_context!())
-        .expect("failed to run taploot");
+        .expect("failed to run coil-sniffer");
 }

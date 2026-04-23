@@ -7,7 +7,7 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::db::schema;
 use crate::parser::pcap;
-use crate::{AppState, DbHandle, TaplootError};
+use crate::{AppState, DbHandle, CoilSnifferError};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ImportResult {
@@ -29,10 +29,10 @@ pub async fn import_pcap(
     path: String,
     state: State<'_, AppState>,
     app: AppHandle,
-) -> Result<ImportResult, TaplootError> {
+) -> Result<ImportResult, CoilSnifferError> {
     // Drop previous DB (cleans up temp file via DbHandle::drop)
     {
-        let mut db_lock = state.db.lock().map_err(|e| TaplootError::Parse(e.to_string()))?;
+        let mut db_lock = state.db.lock().map_err(|e| CoilSnifferError::Parse(e.to_string()))?;
         *db_lock = None;
     }
 
@@ -62,10 +62,10 @@ pub async fn import_pcap(
         let (conn, db_path) = schema::init_db()?;
         let conn = Arc::new(Mutex::new(conn));
         let parse_result = pcap::parse_pcap(&pcap_path, &conn, &progress_for_parser)?;
-        Ok::<_, TaplootError>((conn, db_path, parse_result))
+        Ok::<_, CoilSnifferError>((conn, db_path, parse_result))
     })
     .await
-    .map_err(|e| TaplootError::Parse(format!("task join: {e}")))??
+    .map_err(|e| CoilSnifferError::Parse(format!("task join: {e}")))??
     ;
 
     let (conn, db_path, import_result) = result;
@@ -78,7 +78,7 @@ pub async fn import_pcap(
     });
     let _ = progress_task.await;
 
-    let mut db_lock = state.db.lock().map_err(|e| TaplootError::Parse(e.to_string()))?;
+    let mut db_lock = state.db.lock().map_err(|e| CoilSnifferError::Parse(e.to_string()))?;
     *db_lock = Some(DbHandle { conn, path: db_path });
 
     Ok(import_result)
