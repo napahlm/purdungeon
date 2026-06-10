@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
+import { computed } from 'vue'
 import { open } from '@tauri-apps/plugin-dialog'
 import { useTauri } from '@/composables/useTauri'
 import { useAppStore, IMPORT_STAGES } from '@/stores/app'
@@ -8,7 +7,8 @@ import { useAppStore, IMPORT_STAGES } from '@/stores/app'
 const appStore = useAppStore()
 const { loadFile } = useTauri()
 
-const hovering = ref(false)
+// Drag-drop events are handled at the app root; this only mirrors the hover
+const hovering = computed(() => appStore.dragHovering)
 const progressPct = computed(() => Math.round(appStore.importProgress * 100))
 
 const currentStageIndex = computed(() => IMPORT_STAGES.findIndex((s) => s.id === appStore.stage))
@@ -27,28 +27,6 @@ async function openFilePicker() {
   })
   if (selected) await loadFile(selected)
 }
-
-let unlisten: (() => void) | null = null
-
-onMounted(async () => {
-  const appWindow = getCurrentWebviewWindow()
-  unlisten = await appWindow.onDragDropEvent((event) => {
-    if (appStore.loading) return
-    if (event.payload.type === 'over') {
-      hovering.value = true
-    } else if (event.payload.type === 'drop') {
-      hovering.value = false
-      const paths = event.payload.paths
-      if (paths.length > 0) loadFile(paths[0])
-    } else {
-      hovering.value = false
-    }
-  })
-})
-
-onUnmounted(() => {
-  unlisten?.()
-})
 </script>
 
 <template>

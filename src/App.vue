@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted } from 'vue'
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { useAppStore } from '@/stores/app'
 import { useTopologyStore } from '@/stores/topology'
+import { useTauri } from '@/composables/useTauri'
 import FileDropZone from '@/components/FileDropZone.vue'
 import AppHeader from '@/components/AppHeader.vue'
 import TopologyCanvas from '@/components/TopologyCanvas.vue'
@@ -15,6 +17,7 @@ import LevelLegend from '@/components/LevelLegend.vue'
 
 const appStore = useAppStore()
 const topology = useTopologyStore()
+const { loadFile } = useTauri()
 
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
@@ -22,12 +25,34 @@ function onKeydown(e: KeyboardEvent) {
   }
 }
 
-onMounted(() => window.addEventListener('keydown', onKeydown))
-onUnmounted(() => window.removeEventListener('keydown', onKeydown))
+// Dropping a capture works anywhere, anytime — including over a loaded view,
+// where it replaces the current capture.
+let unlistenDrop: (() => void) | null = null
+
+onMounted(async () => {
+  window.addEventListener('keydown', onKeydown)
+  const appWindow = getCurrentWebviewWindow()
+  unlistenDrop = await appWindow.onDragDropEvent((event) => {
+    if (appStore.loading) return
+    if (event.payload.type === 'over') {
+      appStore.dragHovering = true
+    } else if (event.payload.type === 'drop') {
+      appStore.dragHovering = false
+      if (event.payload.paths.length > 0) loadFile(event.payload.paths[0])
+    } else {
+      appStore.dragHovering = false
+    }
+  })
+})
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', onKeydown)
+  unlistenDrop?.()
+})
 </script>
 
 <template>
-  <div class="flex h-screen w-screen flex-col bg-bg-primary">
+  <div class="relative flex h-screen w-screen flex-col bg-bg-primary">
     <template v-if="appStore.loadedFile">
       <AppHeader />
       <div class="relative flex flex-1 overflow-hidden">
@@ -49,6 +74,17 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
       </div>
       <TimelineBar />
       <SearchBar />
+      <!-- Drop target feedback over a loaded view -->
+      <div
+        v-if="appStore.dragHovering"
+        class="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-bg-primary/70 backdrop-blur-sm"
+      >
+        <div
+          class="rounded-2xl border border-dashed border-accent bg-bg-secondary px-10 py-6 text-sm text-text-primary"
+        >
+          Drop to open this capture
+        </div>
+      </div>
     </template>
     <FileDropZone v-else />
   </div>

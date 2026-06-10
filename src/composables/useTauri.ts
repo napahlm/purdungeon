@@ -120,6 +120,8 @@ export function useTauri() {
         getTimeRange(),
         getFindings(),
       ])
+      // Clear selection, filters, and findings left over from a previous capture
+      topologyStore.reset()
       timelineStore.setFullRange(timeRange[0], timeRange[1])
       topologyStore.buildGraph(hosts, connections)
       topologyStore.findings = findings

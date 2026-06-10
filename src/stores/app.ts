@@ -26,6 +26,7 @@ export const useAppStore = defineStore('app', () => {
   const error = ref<string | null>(null)
   const importProgress = ref(0) // 0.0 – 1.0, within the reading stage
   const stage = ref<ImportStage | null>(null)
+  const dragHovering = ref(false)
 
   function setLoading(value: boolean) {
     loading.value = value
@@ -65,6 +66,7 @@ export const useAppStore = defineStore('app', () => {
     error,
     importProgress,
     stage,
+    dragHovering,
     setLoading,
     setStage,
     setLoadedFile,
