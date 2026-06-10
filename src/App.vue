@@ -64,10 +64,12 @@ onUnmounted(() => {
           <FilterBar />
         </div>
         <div
-          class="absolute right-3 top-3 z-10"
-          :class="{
-            'right-89': topology.selectedNodeId !== null || topology.selectedEdgeId !== null,
-          }"
+          class="absolute top-3 z-10"
+          :class="
+            topology.selectedNodeId !== null || topology.selectedEdgeId !== null
+              ? 'right-89'
+              : 'right-3'
+          "
         >
           <LevelLegend />
         </div>

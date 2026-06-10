@@ -15,21 +15,41 @@ const edge = computed(() => {
   return topology.edges.find((e) => e.connection.id === topology.selectedEdgeId) ?? null
 })
 
-const connection = computed(() => edge.value?.connection ?? null)
-const srcHost = computed(() => edge.value?.source.host ?? null)
-const dstHost = computed(() => edge.value?.target.host ?? null)
+// Selections from the node panel or a finding can point at conversations that
+// have no canvas edge (broadcast/multicast peers, self-loops) — fall back to
+// the raw capture data so the panel never opens empty.
+const connection = computed(() => {
+  if (topology.selectedEdgeId === null) return null
+  return edge.value?.connection ?? topology.connectionsById.get(topology.selectedEdgeId) ?? null
+})
+const srcHost = computed(
+  () =>
+    edge.value?.source.host ??
+    (connection.value ? (topology.hostsById.get(connection.value.src_host_id) ?? null) : null),
+)
+const dstHost = computed(
+  () =>
+    edge.value?.target.host ??
+    (connection.value ? (topology.hostsById.get(connection.value.dst_host_id) ?? null) : null),
+)
 
+let requestSeq = 0
 watch(
   () => topology.selectedEdgeId,
   async (edgeId) => {
+    const seq = ++requestSeq
     modbus.value = null
+    loading.value = false
     if (edgeId === null) return
     if (connection.value?.app_protocol !== 'modbus') return
     loading.value = true
     try {
-      modbus.value = await getModbusConversation(edgeId)
+      const result = await getModbusConversation(edgeId)
+      if (seq === requestSeq) modbus.value = result
+    } catch {
+      // Traffic stats still show; only the Modbus depth is unavailable.
     } finally {
-      loading.value = false
+      if (seq === requestSeq) loading.value = false
     }
   },
   { immediate: true },
@@ -61,7 +81,7 @@ function openHost(hostId: number) {
 </script>
 
 <template>
-  <div class="flex h-full w-86 flex-col border-l border-border bg-bg-secondary">
+  <div class="flex h-full w-86 shrink-0 flex-col border-l border-border bg-bg-secondary">
     <!-- Header -->
     <div class="flex items-center justify-between border-b border-border px-4 py-3">
       <div class="flex items-center gap-2.5">
@@ -202,6 +222,13 @@ function openHost(hostId: number) {
           </div>
         </div>
       </div>
+    </div>
+
+    <div
+      v-else
+      class="flex flex-1 items-center justify-center px-6 text-center text-sm text-text-muted"
+    >
+      No data for this conversation.
     </div>
   </div>
 </template>

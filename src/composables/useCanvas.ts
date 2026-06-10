@@ -14,6 +14,10 @@ export function useCanvas(containerRef: Ref<HTMLDivElement | null>) {
     const el = containerRef.value
     if (!el) return
 
+    // A pixel of jitter during a click must stay a click, not become a
+    // stage pan or node drag that swallows the click event.
+    Konva.dragDistance = 3
+
     const s = new Konva.Stage({
       container: el,
       width: el.clientWidth,
@@ -85,13 +89,19 @@ export function useCanvas(containerRef: Ref<HTMLDivElement | null>) {
     scale.value = newScale
   }
 
+  // The container resizes when sibling panels open and close, not just with
+  // the window, so observe the element itself.
+  let resizeObserver: ResizeObserver | null = null
+
   onMounted(() => {
     init()
-    window.addEventListener('resize', resize)
+    resizeObserver = new ResizeObserver(() => resize())
+    if (containerRef.value) resizeObserver.observe(containerRef.value)
   })
 
   onUnmounted(() => {
-    window.removeEventListener('resize', resize)
+    resizeObserver?.disconnect()
+    resizeObserver = null
     stage.value?.destroy()
     stage.value = null
     bandLayer.value = null

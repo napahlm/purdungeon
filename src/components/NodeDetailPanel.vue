@@ -12,6 +12,7 @@ const { getHostDetail, getModbusHostActivity, setRoleOverride, setLevelOverride 
 const detail = ref<HostDetail | null>(null)
 const modbus = ref<ModbusHostActivity | null>(null)
 const loading = ref(false)
+const error = ref<string | null>(null)
 
 const host = computed(() => detail.value?.host ?? null)
 const speaksModbus = computed(() => host.value?.protocols.includes('modbus') ?? false)
@@ -22,6 +23,7 @@ const levelBadgeColor = computed(() => {
   return LEVEL_COLORS[level === null ? 'unknown' : String(level)]
 })
 
+let requestSeq = 0
 watch(
   () => topology.selectedNodeId,
   async (hostId) => {
@@ -30,14 +32,24 @@ watch(
       modbus.value = null
       return
     }
+    const seq = ++requestSeq
     loading.value = true
+    error.value = null
     try {
-      detail.value = await getHostDetail(hostId)
-      modbus.value = detail.value.host.protocols.includes('modbus')
+      const result = await getHostDetail(hostId)
+      const activity = result.host.protocols.includes('modbus')
         ? await getModbusHostActivity(hostId)
         : null
+      if (seq !== requestSeq) return
+      detail.value = result
+      modbus.value = activity
+    } catch (e) {
+      if (seq !== requestSeq) return
+      detail.value = null
+      modbus.value = null
+      error.value = e instanceof Error ? e.message : String(e)
     } finally {
-      loading.value = false
+      if (seq === requestSeq) loading.value = false
     }
   },
   { immediate: true },
@@ -86,7 +98,7 @@ function close() {
 </script>
 
 <template>
-  <div class="flex h-full w-86 flex-col border-l border-border bg-bg-secondary">
+  <div class="flex h-full w-86 shrink-0 flex-col border-l border-border bg-bg-secondary">
     <!-- Header -->
     <div class="flex items-center justify-between border-b border-border px-4 py-3">
       <div class="flex items-center gap-2.5">
@@ -117,6 +129,13 @@ function close() {
 
     <div v-if="loading" class="flex flex-1 items-center justify-center text-sm text-text-muted">
       Loading…
+    </div>
+
+    <div
+      v-else-if="error"
+      class="flex flex-1 items-center justify-center px-6 text-center text-sm text-text-muted"
+    >
+      Couldn't load this asset: {{ error }}
     </div>
 
     <div v-else-if="detail && host" class="flex-1 overflow-y-auto">

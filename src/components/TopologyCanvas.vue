@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, nextTick } from 'vue'
+import { ref, watch, nextTick, onMounted } from 'vue'
 import Konva from 'konva'
 import { useCanvas } from '@/composables/useCanvas'
 import { useTopologyStore } from '@/stores/topology'
@@ -162,6 +162,19 @@ function updateStyles() {
   mainLayer.value?.batchDraw()
 }
 
+function fitView() {
+  const { minX, maxX, height } = contentBounds()
+  fitToContent({ x: minX - 80, y: -40, width: maxX - minX + 160, height: height + 80 })
+}
+
+// The canvas mounts after the capture is imported (v-if in App.vue), so the
+// store is already populated and no watcher fires for that initial state —
+// draw it now. useCanvas registered its onMounted first, so the stage exists.
+onMounted(() => {
+  renderGraph()
+  fitView()
+})
+
 // Full re-render when the visible graph changes
 watch(
   () => [topology.filteredNodes, topology.filteredEdges],
@@ -174,8 +187,7 @@ watch(
   async () => {
     await nextTick()
     renderGraph()
-    const { minX, maxX, height } = contentBounds()
-    fitToContent({ x: minX - 80, y: -40, width: maxX - minX + 160, height: height + 80 })
+    fitView()
   },
 )
 
@@ -201,5 +213,8 @@ watch(stage, (s) => {
 </script>
 
 <template>
-  <div ref="containerRef" class="h-full w-full bg-bg-primary" />
+  <!-- min-w-0: the Konva stage sets a fixed pixel width on its content div,
+       which would otherwise act as a min-width and stop this flex item from
+       shrinking when a detail panel opens — pushing the panel out of view. -->
+  <div ref="containerRef" class="h-full min-w-0 flex-1 overflow-hidden bg-bg-primary" />
 </template>

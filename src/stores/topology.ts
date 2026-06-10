@@ -140,6 +140,11 @@ export const useTopologyStore = defineStore('topology', () => {
   const nodes = shallowRef<CanvasNode[]>([])
   const edges = shallowRef<CanvasEdge[]>([])
   const bands = shallowRef<BandLayout[]>([])
+  // Every host and connection from the capture, including broadcast/multicast
+  // pseudo-hosts and self-loops that never become canvas nodes or edges. The
+  // detail panels resolve from these so a selection is never a dead end.
+  const hostsById = shallowRef(new Map<number, Host>())
+  const connectionsById = shallowRef(new Map<number, Connection>())
   const layoutVersion = ref(0)
   const selectedNodeId = ref<number | null>(null)
   const selectedEdgeId = ref<number | null>(null)
@@ -240,6 +245,9 @@ export const useTopologyStore = defineStore('topology', () => {
   })
 
   function buildGraph(hosts: Host[], connections: Connection[]) {
+    hostsById.value = new Map(hosts.map((h) => [h.id, h]))
+    connectionsById.value = new Map(connections.map((c) => [c.id, c]))
+
     const nodeMap = new Map<number, CanvasNode>()
     const built: CanvasNode[] = []
 
@@ -292,6 +300,7 @@ export const useTopologyStore = defineStore('topology', () => {
 
   /** Re-derive band, color, and shape after a role/level override. */
   function refreshHost(updated: Host) {
+    hostsById.value.set(updated.id, updated)
     const node = nodes.value.find((n) => n.host.id === updated.id)
     if (!node) return
     node.host = updated
@@ -365,6 +374,8 @@ export const useTopologyStore = defineStore('topology', () => {
     nodes.value = []
     edges.value = []
     bands.value = []
+    hostsById.value = new Map()
+    connectionsById.value = new Map()
     selectedNodeId.value = null
     selectedEdgeId.value = null
     searchQuery.value = ''
@@ -379,6 +390,8 @@ export const useTopologyStore = defineStore('topology', () => {
     nodes,
     edges,
     bands,
+    hostsById,
+    connectionsById,
     layoutVersion,
     selectedNodeId,
     selectedEdgeId,
