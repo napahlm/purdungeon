@@ -1,19 +1,52 @@
 @import 'tailwindcss';
 
+/*
+ * Design tokens. Color carries meaning and nothing else:
+ *  - node color = Purdue level (warm at the process floor, cool at enterprise)
+ *  - edge color = protocol family
+ *  - amber/coral are reserved for findings and cross-zone traffic
+ */
 @theme {
-  --color-bg-primary: #1a1a2e;
-  --color-bg-secondary: #16213e;
-  --color-bg-surface: #0f3460;
-  --color-bg-elevated: #252545;
-  --color-text-primary: #e0e0e0;
-  --color-text-secondary: #a0a0b0;
-  --color-text-muted: #6a6a7a;
-  --color-accent: #39ff14;
-  --color-accent-dim: #2ecc71;
-  --color-edge-tcp: #6b7280;
-  --color-edge-udp: #3b82f6;
-  --color-edge-modbus: #39ff14;
-  --color-border: #2a2a4a;
+  /* Surfaces */
+  --color-bg-primary: #0e1116;
+  --color-bg-secondary: #141921;
+  --color-bg-surface: #1a202a;
+  --color-bg-elevated: #202733;
+  --color-border: #29313d;
+  --color-border-strong: #39434f;
+
+  /* Text */
+  --color-text-primary: #e7eaef;
+  --color-text-secondary: #9aa4b1;
+  --color-text-muted: #5f6975;
+
+  /* Single interactive accent */
+  --color-accent: #5b9dff;
+  --color-accent-dim: #3d6fc4;
+
+  /* Status */
+  --color-warn: #f0b35c;
+  --color-alert: #f07a5f;
+
+  /* Purdue levels: 0 (process) → 5 (enterprise/external) */
+  --color-level-0: #ef8e6d;
+  --color-level-1: #e8b15c;
+  --color-level-2: #d6c35e;
+  --color-level-3: #6fb8c9;
+  --color-level-4: #5b9dff;
+  --color-level-5: #9a8cff;
+  --color-level-unknown: #6a7480;
+
+  /* Protocol families (edges) */
+  --color-proto-modbus: #4cc2ff;
+  --color-proto-ot: #62c4ad;
+  --color-proto-it: #8f9aa8;
+  --color-proto-other: #4a545f;
+
+  /* Legacy aliases still referenced by older components */
+  --color-edge-tcp: #4a545f;
+  --color-edge-udp: #5d6a78;
+  --color-edge-modbus: #4cc2ff;
 }
 
 html,
@@ -26,5 +59,13 @@ body,
   overflow: hidden;
   background-color: var(--color-bg-primary);
   color: var(--color-text-primary);
-  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+code,
+.font-mono {
+  font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, monospace;
 }

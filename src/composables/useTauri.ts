@@ -1,9 +1,28 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import type { Host, Connection, ImportResult, HostDetail, Packet } from '@/types/network'
-import { useAppStore } from '@/stores/app'
+import { useAppStore, type ImportStage } from '@/stores/app'
 import { useTopologyStore } from '@/stores/topology'
 import { useTimelineStore } from '@/stores/timeline'
+
+const ACCEPTED_EXTENSIONS = ['pcap', 'pcapng', 'cap']
+
+export function isCaptureFile(path: string): boolean {
+  const ext = path.split('.').pop()?.toLowerCase() ?? ''
+  return ACCEPTED_EXTENSIONS.includes(ext)
+}
+
+/** Turn backend errors into something a person can act on. */
+function humanizeError(raw: string): string {
+  const msg = raw.toLowerCase()
+  if (msg.includes('file too small') || msg.includes('reader') || msg.includes('parse error')) {
+    return "This file doesn't look like a packet capture. coil-sniffer reads .pcap and .pcapng files."
+  }
+  if (msg.includes('io error') || msg.includes('no such file') || msg.includes('os error')) {
+    return "Couldn't open that file. Check that it still exists and is readable."
+  }
+  return raw
+}
 
 export function useTauri() {
   async function importPcap(path: string): Promise<ImportResult> {
@@ -39,8 +58,13 @@ export function useTauri() {
     const topologyStore = useTopologyStore()
     const timelineStore = useTimelineStore()
 
+    if (!isCaptureFile(path)) {
+      appStore.setError('That isn’t a capture file. Drop a .pcap or .pcapng instead.')
+      return
+    }
+
     appStore.setLoading(true)
-    const unlisten = await listen<{ bytes_done: number; bytes_total: number }>(
+    const unlistenProgress = await listen<{ bytes_done: number; bytes_total: number }>(
       'import-progress',
       (event) => {
         if (event.payload.bytes_total > 0) {
@@ -48,8 +72,18 @@ export function useTauri() {
         }
       },
     )
+    const unlistenStage = await listen<ImportStage>('import-stage', (event) => {
+      appStore.setStage(event.payload)
+    })
     try {
-      await importPcap(path)
+      const result = await importPcap(path)
+      if (result.packet_count === 0) {
+        appStore.setError(
+          'No readable network traffic in this capture. coil-sniffer currently reads IPv4 over Ethernet.',
+        )
+        return
+      }
+      appStore.setStage('building-view')
       const [hosts, connections, timeRange] = await Promise.all([
         getHosts(),
         getConnections(),
@@ -59,9 +93,10 @@ export function useTauri() {
       topologyStore.buildGraph(hosts, connections)
       appStore.setLoadedFile(path)
     } catch (e) {
-      appStore.setError(e instanceof Error ? e.message : String(e))
+      appStore.setError(humanizeError(e instanceof Error ? e.message : String(e)))
     } finally {
-      unlisten()
+      unlistenProgress()
+      unlistenStage()
       appStore.setLoading(false)
     }
   }
