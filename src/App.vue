@@ -9,7 +9,7 @@ import TimelineBar from '@/components/TimelineBar.vue'
 import NodeDetailPanel from '@/components/NodeDetailPanel.vue'
 import EdgeDetailPanel from '@/components/EdgeDetailPanel.vue'
 import SearchBar from '@/components/SearchBar.vue'
-import EdgeFilterBar from '@/components/EdgeFilterBar.vue'
+import FilterBar from '@/components/FilterBar.vue'
 
 const appStore = useAppStore()
 const topology = useTopologyStore()
@@ -32,8 +32,8 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
         <TopologyCanvas />
         <NodeDetailPanel v-if="topology.selectedNodeId !== null" />
         <EdgeDetailPanel v-if="topology.selectedEdgeId !== null" />
-        <div class="absolute bottom-2 left-2 z-10">
-          <EdgeFilterBar />
+        <div class="absolute bottom-3 left-3 z-10">
+          <FilterBar />
         </div>
       </div>
       <TimelineBar />
