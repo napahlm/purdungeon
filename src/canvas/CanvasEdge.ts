@@ -1,5 +1,9 @@
 import Konva from 'konva'
 import type { CanvasEdge } from '@/types/canvas'
+import { SELECTION } from './palette'
+
+const BASE_OPACITY = 0.45
+const CROSS_ZONE_OPACITY = 0.85
 
 function curvedPoints(edge: CanvasEdge): number[] {
   const { x: x1, y: y1 } = edge.source
@@ -14,22 +18,24 @@ function curvedPoints(edge: CanvasEdge): number[] {
   // Perpendicular unit vector
   const nx = -dy / len
   const ny = dx / len
-  // Control point offset
   const cx = mx + nx * edge.curveOffset
   const cy = my + ny * edge.curveOffset
   return [x1, y1, cx, cy, x2, y2]
+}
+
+function baseOpacity(edge: CanvasEdge): number {
+  return edge.crossZone ? CROSS_ZONE_OPACITY : BASE_OPACITY
 }
 
 export function createEdgeLine(
   edge: CanvasEdge,
   callbacks?: { onClick?: (connectionId: number) => void },
 ): Konva.Line {
-  const pts = curvedPoints(edge)
   const line = new Konva.Line({
-    points: pts,
+    points: curvedPoints(edge),
     stroke: edge.color,
     strokeWidth: edge.width,
-    opacity: 0.6,
+    opacity: baseOpacity(edge),
     hitStrokeWidth: 14,
     tension: edge.curveOffset !== 0 ? 0.5 : 0,
     id: `edge-${edge.connection.id}`,
@@ -37,7 +43,18 @@ export function createEdgeLine(
 
   if (callbacks?.onClick) {
     const cb = callbacks.onClick
-    line.on('click tap', () => cb(edge.connection.id))
+    line.on('click tap', (e) => {
+      e.cancelBubble = true
+      cb(edge.connection.id)
+    })
+    line.on('mouseenter', () => {
+      const stage = line.getStage()
+      if (stage) stage.container().style.cursor = 'pointer'
+    })
+    line.on('mouseleave', () => {
+      const stage = line.getStage()
+      if (stage) stage.container().style.cursor = 'default'
+    })
   }
 
   return line
@@ -46,7 +63,7 @@ export function createEdgeLine(
 export function updateEdgeLine(line: Konva.Line, edge: CanvasEdge, selected: boolean) {
   line.points(curvedPoints(edge))
   line.tension(edge.curveOffset !== 0 ? 0.5 : 0)
-  line.stroke(selected ? '#ffffff' : edge.color)
-  line.strokeWidth(selected ? edge.width + 2 : edge.width)
-  line.opacity(selected ? 1 : 0.6)
+  line.stroke(selected ? SELECTION : edge.color)
+  line.strokeWidth(selected ? edge.width + 1.5 : edge.width)
+  line.opacity(selected ? 1 : baseOpacity(edge))
 }

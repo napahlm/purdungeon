@@ -1,22 +1,15 @@
 import type { Host, Connection } from './network'
-
-export interface ClusterInfo {
-  subnet: string
-  hostCount: number
-  hostIds: number[]
-}
+import type { ProtoFamily } from '@/canvas/palette'
 
 export interface CanvasNode {
   host: Host
   x: number
   y: number
-  vx: number
-  vy: number
-  radius: number
+  bandKey: string
   color: string
   label: string
-  pinned: boolean
-  cluster?: ClusterInfo
+  shape: 'circle' | 'square' | 'diamond'
+  dashed: boolean
 }
 
 export interface CanvasEdge {
@@ -25,12 +18,16 @@ export interface CanvasEdge {
   target: CanvasNode
   color: string
   width: number
+  family: ProtoFamily
+  crossZone: boolean
   curveOffset: number // 0 = straight, nonzero = perpendicular offset for parallel edges
 }
 
-export interface LayoutConfig {
-  linkDistance: number
-  chargeStrength: number
-  centerX: number
-  centerY: number
+/** A populated horizontal band in the laid-out view. */
+export interface BandLayout {
+  key: string
+  label: string
+  y: number
+  height: number
+  index: number
 }

@@ -1,119 +1,197 @@
-import { ref, computed, shallowRef, triggerRef } from 'vue'
+import { ref, computed, shallowRef } from 'vue'
 import { defineStore } from 'pinia'
-import {
-  forceSimulation,
-  forceLink,
-  forceManyBody,
-  forceCenter,
-  forceCollide,
-  type Simulation,
-  type SimulationNodeDatum,
-} from 'd3-force'
 import type { Host, Connection } from '@/types/network'
-import type { CanvasNode, CanvasEdge, LayoutConfig } from '@/types/canvas'
+import { effectiveLevel, effectiveRole } from '@/types/network'
+import type { CanvasNode, CanvasEdge, BandLayout } from '@/types/canvas'
+import {
+  BANDS,
+  bandKeyForHost,
+  isCrossZone,
+  levelColor,
+  protoFamily,
+  PROTO_COLORS,
+  ALERT,
+  type ProtoFamily,
+} from '@/canvas/palette'
 import { useTimelineStore } from './timeline'
 
-type SimNode = CanvasNode & SimulationNodeDatum
+const BAND_HEIGHT = 220
+const NODE_SPACING = 130
+const BARYCENTER_SWEEPS = 4
+const CURVE_SPACING = 30
 
-const EDGE_COLORS: Record<string, string> = {
-  TCP: '#6b7280',
-  UDP: '#3b82f6',
-  Modbus: '#39ff14',
-}
-
-const DEFAULT_LAYOUT: LayoutConfig = {
-  linkDistance: 120,
-  chargeStrength: -300,
-  centerX: 640,
-  centerY: 400,
-}
-
-const CLUSTER_THRESHOLD = 200
-
-function edgeColor(conn: Connection): string {
-  if (conn.app_protocol) return EDGE_COLORS[conn.app_protocol] ?? '#6b7280'
-  return EDGE_COLORS[conn.protocol] ?? '#6b7280'
+function nodeShape(host: Host): CanvasNode['shape'] {
+  const role = effectiveRole(host)
+  if (role === 'plc' || role === 'field-device') return 'square'
+  if (role === 'network-gear') return 'diamond'
+  return 'circle'
 }
 
 function edgeWidth(conn: Connection): number {
-  const base = Math.log2(conn.packet_count + 1)
+  const base = Math.log2(conn.byte_count / 512 + 2)
   return Math.max(1, Math.min(base, 6))
 }
 
-function getSubnet(ip: string): string {
-  const parts = ip.split('.')
-  return parts.length === 4 ? `${parts[0]}.${parts[1]}.${parts[2]}` : ip
+function ipSortKey(ip: string): number {
+  const parts = ip.split('.').map(Number)
+  if (parts.length !== 4 || parts.some(Number.isNaN)) return Number.MAX_SAFE_INTEGER
+  return ((parts[0] * 256 + parts[1]) * 256 + parts[2]) * 256 + parts[3]
 }
 
 function pairKey(a: number, b: number): string {
   return a < b ? `${a}-${b}` : `${b}-${a}`
 }
 
-const CURVE_SPACING = 30
-
 function assignCurveOffsets(edgeList: CanvasEdge[]): void {
   const groups = new Map<string, CanvasEdge[]>()
   for (const e of edgeList) {
     const key = pairKey(e.source.host.id, e.target.host.id)
     let arr = groups.get(key)
-    if (!arr) { arr = []; groups.set(key, arr) }
+    if (!arr) {
+      arr = []
+      groups.set(key, arr)
+    }
     arr.push(e)
   }
   for (const group of groups.values()) {
-    if (group.length === 1) {
-      group[0].curveOffset = 0
-      continue
-    }
     const n = group.length
     for (let i = 0; i < n; i++) {
-      group[i].curveOffset = (i - (n - 1) / 2) * CURVE_SPACING
+      group[i].curveOffset = n === 1 ? 0 : (i - (n - 1) / 2) * CURVE_SPACING
     }
+  }
+}
+
+/**
+ * Static Purdue-banded layout. Hosts sit in horizontal bands by level
+ * (process at the bottom, enterprise at the top). Within a band, a few
+ * barycenter sweeps pull connected nodes toward their peers in other
+ * bands, then nodes are spaced evenly — deterministic and overlap-free.
+ */
+function layoutBands(
+  nodes: CanvasNode[],
+  adjacency: Map<number, number[]>,
+): BandLayout[] {
+  const byBand = new Map<string, CanvasNode[]>()
+  for (const node of nodes) {
+    let arr = byBand.get(node.bandKey)
+    if (!arr) {
+      arr = []
+      byBand.set(node.bandKey, arr)
+    }
+    arr.push(node)
+  }
+
+  // Only bands that have hosts, in Purdue order (top → bottom)
+  const populated = BANDS.filter((b) => byBand.has(b.key))
+  const layouts: BandLayout[] = populated.map((b, i) => ({
+    key: b.key,
+    label: b.label,
+    y: i * BAND_HEIGHT,
+    height: BAND_HEIGHT,
+    index: i,
+  }))
+
+  const nodeById = new Map<number, CanvasNode>()
+  for (const node of nodes) nodeById.set(node.host.id, node)
+
+  // Initial order: by IP, spaced around x = 0
+  for (const layout of layouts) {
+    const band = byBand.get(layout.key)!
+    band.sort((a, b) => ipSortKey(a.host.ip_address) - ipSortKey(b.host.ip_address))
+    respace(band, layout)
+  }
+
+  // Barycenter sweeps: pull nodes under their neighbors, keep even spacing
+  for (let sweep = 0; sweep < BARYCENTER_SWEEPS; sweep++) {
+    for (const layout of layouts) {
+      const band = byBand.get(layout.key)!
+      const desired = new Map<number, number>()
+      for (const node of band) {
+        const peers = adjacency.get(node.host.id) ?? []
+        const xs = peers
+          .map((id) => nodeById.get(id))
+          .filter((n): n is CanvasNode => !!n && n.bandKey !== node.bandKey)
+          .map((n) => n.x)
+        desired.set(node.host.id, xs.length > 0 ? xs.reduce((a, b) => a + b, 0) / xs.length : node.x)
+      }
+      band.sort((a, b) => desired.get(a.host.id)! - desired.get(b.host.id)!)
+      respace(band, layout)
+    }
+  }
+
+  return layouts
+}
+
+function respace(band: CanvasNode[], layout: BandLayout): void {
+  const n = band.length
+  for (let i = 0; i < n; i++) {
+    band[i].x = (i - (n - 1) / 2) * NODE_SPACING
+    band[i].y = layout.y + layout.height / 2
   }
 }
 
 export const useTopologyStore = defineStore('topology', () => {
   const nodes = shallowRef<CanvasNode[]>([])
   const edges = shallowRef<CanvasEdge[]>([])
+  const bands = shallowRef<BandLayout[]>([])
+  const layoutVersion = ref(0)
   const selectedNodeId = ref<number | null>(null)
   const selectedEdgeId = ref<number | null>(null)
   const searchQuery = ref('')
-  const layout = ref<LayoutConfig>({ ...DEFAULT_LAYOUT })
-  const expandedSubnets = ref(new Set<string>())
-  const clustered = ref(false)
-  const trafficMin = ref(0)
-  const trafficMax = ref(Infinity)
 
-  let simulation: Simulation<SimNode, undefined> | null = null
-  let onTickCallback: (() => void) | null = null
-  let rawHosts: Host[] = []
-  let rawConnections: Connection[] = []
+  // Filters: empty sets mean "show everything"
+  const hiddenFamilies = ref(new Set<ProtoFamily>())
+  const hiddenBands = ref(new Set<string>())
+  const crossZoneOnly = ref(false)
 
   const timelineStore = useTimelineStore()
 
+  const visibleNodes = computed(() => {
+    if (hiddenBands.value.size === 0) return nodes.value
+    return nodes.value.filter((n) => !hiddenBands.value.has(n.bandKey))
+  })
+
   const filteredEdges = computed(() => {
     let result = edges.value
+    if (hiddenBands.value.size > 0) {
+      result = result.filter(
+        (e) =>
+          !hiddenBands.value.has(e.source.bandKey) && !hiddenBands.value.has(e.target.bandKey),
+      )
+    }
+    if (hiddenFamilies.value.size > 0) {
+      result = result.filter((e) => !hiddenFamilies.value.has(e.family))
+    }
+    if (crossZoneOnly.value) {
+      result = result.filter((e) => e.crossZone)
+    }
     if (timelineStore.filtering) {
       const { start, end } = timelineStore.filterRange
-      result = result.filter((e) => e.connection.last_seen >= start && e.connection.first_seen <= end)
-    }
-    if (trafficMin.value > 0 || trafficMax.value < Infinity) {
-      result = result.filter((e) => {
-        const pc = e.connection.packet_count
-        return pc >= trafficMin.value && pc <= trafficMax.value
-      })
+      result = result.filter(
+        (e) => e.connection.last_seen >= start && e.connection.first_seen <= end,
+      )
     }
     return result
   })
 
   const filteredNodes = computed(() => {
-    if (!timelineStore.filtering) return nodes.value
+    if (!timelineStore.filtering && !crossZoneOnly.value) return visibleNodes.value
     const activeHostIds = new Set<number>()
     for (const edge of filteredEdges.value) {
       activeHostIds.add(edge.source.host.id)
       activeHostIds.add(edge.target.host.id)
     }
-    return nodes.value.filter((n) => activeHostIds.has(n.host.id))
+    return visibleNodes.value.filter((n) => activeHostIds.has(n.host.id))
   })
+
+  /** Protocol families present in the capture, for the filter bar. */
+  const presentFamilies = computed<ProtoFamily[]>(() => {
+    const found = new Set<ProtoFamily>()
+    for (const e of edges.value) found.add(e.family)
+    return (['modbus', 'ot', 'it', 'other'] as ProtoFamily[]).filter((f) => found.has(f))
+  })
+
+  const crossZoneCount = computed(() => edges.value.filter((e) => e.crossZone).length)
 
   const matchedNodeIds = computed<Set<number>>(() => {
     const q = searchQuery.value.trim().toLowerCase()
@@ -124,281 +202,124 @@ export const useTopologyStore = defineStore('topology', () => {
       if (
         h.ip_address.toLowerCase().includes(q) ||
         h.mac_address.toLowerCase().includes(q) ||
-        h.role.toLowerCase().includes(q) ||
-        (h.vendor ?? '').toLowerCase().includes(q)
+        effectiveRole(h).toLowerCase().includes(q) ||
+        (h.vendor ?? '').toLowerCase().includes(q) ||
+        h.protocols.toLowerCase().includes(q)
       ) {
         matched.add(h.id)
-      }
-    }
-    for (const edge of edges.value) {
-      const c = edge.connection
-      const proto = (c.app_protocol ?? c.protocol).toLowerCase()
-      if (proto.includes(q)) {
-        matched.add(c.src_host_id)
-        matched.add(c.dst_host_id)
       }
     }
     return matched
   })
 
-  const packetCountRange = computed(() => {
-    if (edges.value.length === 0) return { min: 0, max: 0 }
-    let lo = Infinity
-    let hi = 0
-    for (const e of edges.value) {
-      const pc = e.connection.packet_count
-      if (pc < lo) lo = pc
-      if (pc > hi) hi = pc
-    }
-    return { min: lo, max: hi }
-  })
-
-  function setTrafficFilter(min: number, max: number) {
-    trafficMin.value = min
-    trafficMax.value = max
-  }
-
   function buildGraph(hosts: Host[], connections: Connection[]) {
-    rawHosts = hosts
-    rawConnections = connections
-    expandedSubnets.value.clear()
-    trafficMin.value = 0
-    trafficMax.value = Infinity
-
-    if (hosts.length > CLUSTER_THRESHOLD) {
-      clustered.value = true
-      rebuildClusteredGraph()
-    } else {
-      clustered.value = false
-      buildFlatGraph(hosts, connections)
-    }
-  }
-
-  function buildFlatGraph(hosts: Host[], connections: Connection[]) {
     const nodeMap = new Map<number, CanvasNode>()
+    const built: CanvasNode[] = []
 
-    nodes.value = hosts.map((host) => {
+    for (const host of hosts) {
+      const bandKey = bandKeyForHost(host)
+      if (!bandKey) continue // broadcast/multicast pseudo-hosts stay out of the view
       const node: CanvasNode = {
         host,
-        x: layout.value.centerX + (Math.random() - 0.5) * 200,
-        y: layout.value.centerY + (Math.random() - 0.5) * 200,
-        vx: 0,
-        vy: 0,
-        radius: 18,
-        color: '#39ff14',
+        x: 0,
+        y: 0,
+        bandKey,
+        color: levelColor(host),
         label: host.ip_address,
-        pinned: false,
+        shape: nodeShape(host),
+        dashed: host.is_external,
       }
       nodeMap.set(host.id, node)
-      return node
-    })
+      built.push(node)
+    }
 
-    edges.value = connections
-      .filter((c) => nodeMap.has(c.src_host_id) && nodeMap.has(c.dst_host_id))
-      .map((conn) => ({
+    const adjacency = new Map<number, number[]>()
+    const builtEdges: CanvasEdge[] = []
+    for (const conn of connections) {
+      const source = nodeMap.get(conn.src_host_id)
+      const target = nodeMap.get(conn.dst_host_id)
+      if (!source || !target || source === target) continue
+
+      const family = protoFamily(conn.app_protocol)
+      const crossZone = isCrossZone(effectiveLevel(source.host), effectiveLevel(target.host))
+      builtEdges.push({
         connection: conn,
-        source: nodeMap.get(conn.src_host_id)!,
-        target: nodeMap.get(conn.dst_host_id)!,
-        color: edgeColor(conn),
+        source,
+        target,
+        color: crossZone ? ALERT : PROTO_COLORS[family],
         width: edgeWidth(conn),
-        curveOffset: 0,
-      }))
-
-    assignCurveOffsets(edges.value)
-    runSimulation()
-  }
-
-  function rebuildClusteredGraph() {
-    const subnetMap = new Map<string, Host[]>()
-    for (const h of rawHosts) {
-      const s = getSubnet(h.ip_address)
-      let arr = subnetMap.get(s)
-      if (!arr) { arr = []; subnetMap.set(s, arr) }
-      arr.push(h)
-    }
-
-    const nodeMap = new Map<number, CanvasNode>()
-    const hostToNodeId = new Map<number, number>()
-    let nextClusterId = -1
-
-    for (const [subnet, hosts] of subnetMap) {
-      if (hosts.length <= 1 || expandedSubnets.value.has(subnet)) {
-        for (const host of hosts) {
-          const node: CanvasNode = {
-            host,
-            x: layout.value.centerX + (Math.random() - 0.5) * 200,
-            y: layout.value.centerY + (Math.random() - 0.5) * 200,
-            vx: 0, vy: 0,
-            radius: 18,
-            color: '#39ff14',
-            label: host.ip_address,
-            pinned: false,
-          }
-          nodeMap.set(host.id, node)
-          hostToNodeId.set(host.id, host.id)
-        }
-      } else {
-        const cId = nextClusterId--
-        const fakeHost: Host = {
-          id: cId,
-          mac_address: '',
-          ip_address: `${subnet}.0/24`,
-          hostname: null,
-          vendor: null,
-          role: 'subnet',
-          role_confidence: 1,
-          role_evidence: null,
-          purdue_level: null,
-          role_override: null,
-          level_override: null,
-          protocols: '',
-          is_external: false,
-          first_seen: Math.min(...hosts.map((h) => h.first_seen)),
-          last_seen: Math.max(...hosts.map((h) => h.last_seen)),
-        }
-        const node: CanvasNode = {
-          host: fakeHost,
-          x: layout.value.centerX + (Math.random() - 0.5) * 200,
-          y: layout.value.centerY + (Math.random() - 0.5) * 200,
-          vx: 0, vy: 0,
-          radius: Math.min(40, 18 + Math.sqrt(hosts.length) * 3),
-          color: '#6366f1',
-          label: `${subnet}.0/24 (${hosts.length})`,
-          pinned: false,
-          cluster: { subnet, hostCount: hosts.length, hostIds: hosts.map((h) => h.id) },
-        }
-        nodeMap.set(cId, node)
-        for (const h of hosts) hostToNodeId.set(h.id, cId)
-      }
-    }
-
-    nodes.value = Array.from(nodeMap.values())
-
-    // Build edges: keep originals between individual nodes, aggregate for clusters
-    const newEdges: CanvasEdge[] = []
-    const aggKey = (a: number, b: number) => `${Math.min(a, b)}-${Math.max(a, b)}`
-    const aggregated = new Map<string, { src: number; dst: number; packets: number; bytes: number; firstSeen: number; lastSeen: number; protocol: string; appProtocol: string | null }>()
-
-    for (const conn of rawConnections) {
-      const srcId = hostToNodeId.get(conn.src_host_id)
-      const dstId = hostToNodeId.get(conn.dst_host_id)
-      if (srcId === undefined || dstId === undefined || srcId === dstId) continue
-
-      if (srcId === conn.src_host_id && dstId === conn.dst_host_id) {
-        // Both endpoints are individual — keep original connection
-        newEdges.push({
-          connection: conn,
-          source: nodeMap.get(srcId)!,
-          target: nodeMap.get(dstId)!,
-          color: edgeColor(conn),
-          width: edgeWidth(conn),
-          curveOffset: 0,
-        })
-      } else {
-        // At least one endpoint is a cluster — aggregate
-        const key = aggKey(srcId, dstId)
-        const ex = aggregated.get(key)
-        if (ex) {
-          ex.packets += conn.packet_count
-          ex.bytes += conn.byte_count
-          ex.firstSeen = Math.min(ex.firstSeen, conn.first_seen)
-          ex.lastSeen = Math.max(ex.lastSeen, conn.last_seen)
-        } else {
-          aggregated.set(key, {
-            src: srcId, dst: dstId,
-            packets: conn.packet_count, bytes: conn.byte_count,
-            firstSeen: conn.first_seen, lastSeen: conn.last_seen,
-            protocol: conn.protocol, appProtocol: conn.app_protocol,
-          })
-        }
-      }
-    }
-
-    let syntheticId = -1
-    for (const agg of aggregated.values()) {
-      const synConn: Connection = {
-        id: syntheticId--,
-        src_host_id: agg.src, dst_host_id: agg.dst,
-        src_port: 0, dst_port: 0,
-        protocol: agg.protocol, app_protocol: agg.appProtocol,
-        packet_count: agg.packets, byte_count: agg.bytes,
-        first_seen: agg.firstSeen, last_seen: agg.lastSeen,
-      }
-      newEdges.push({
-        connection: synConn,
-        source: nodeMap.get(agg.src)!,
-        target: nodeMap.get(agg.dst)!,
-        color: edgeColor(synConn),
-        width: edgeWidth(synConn),
+        family,
+        crossZone,
         curveOffset: 0,
       })
+      adjacency.get(conn.src_host_id)?.push(conn.dst_host_id) ??
+        adjacency.set(conn.src_host_id, [conn.dst_host_id])
+      adjacency.get(conn.dst_host_id)?.push(conn.src_host_id) ??
+        adjacency.set(conn.dst_host_id, [conn.src_host_id])
     }
 
-    edges.value = newEdges
-    assignCurveOffsets(edges.value)
-    runSimulation()
+    assignCurveOffsets(builtEdges)
+    bands.value = layoutBands(built, adjacency)
+    nodes.value = built
+    edges.value = builtEdges
+    layoutVersion.value++
   }
 
-  function toggleCluster(subnet: string) {
-    const s = expandedSubnets.value
-    if (s.has(subnet)) {
-      s.delete(subnet)
-    } else {
-      s.add(subnet)
+  /** Re-derive band, color, and shape after a role/level override. */
+  function refreshHost(updated: Host) {
+    const node = nodes.value.find((n) => n.host.id === updated.id)
+    if (!node) return
+    node.host = updated
+    node.color = levelColor(updated)
+    node.shape = nodeShape(updated)
+    const newBand = bandKeyForHost(updated)
+    if (newBand && newBand !== node.bandKey) {
+      // Band changed: relayout everything so the node moves to its level
+      const adjacency = new Map<number, number[]>()
+      for (const e of edges.value) {
+        adjacency.get(e.source.host.id)?.push(e.target.host.id) ??
+          adjacency.set(e.source.host.id, [e.target.host.id])
+        adjacency.get(e.target.host.id)?.push(e.source.host.id) ??
+          adjacency.set(e.target.host.id, [e.source.host.id])
+      }
+      node.bandKey = newBand
+      bands.value = layoutBands(nodes.value, adjacency)
     }
-    rebuildClusteredGraph()
+    for (const e of edges.value) {
+      if (e.source.host.id === updated.id || e.target.host.id === updated.id) {
+        e.crossZone = isCrossZone(effectiveLevel(e.source.host), effectiveLevel(e.target.host))
+        e.color = e.crossZone ? ALERT : PROTO_COLORS[e.family]
+      }
+    }
+    layoutVersion.value++
   }
 
-  function runSimulation() {
-    if (simulation) simulation.stop()
-
-    const simNodes = nodes.value as SimNode[]
-    const simLinks = edges.value.map((e) => ({
-      source: simNodes.indexOf(e.source as SimNode),
-      target: simNodes.indexOf(e.target as SimNode),
-    }))
-
-    const nodeCount = simNodes.length
-    const charge = nodeCount > 200 ? -150 : layout.value.chargeStrength
-    const alphaDecay = nodeCount > 200 ? 0.05 : 0.0228
-
-    simulation = forceSimulation(simNodes)
-      .force(
-        'link',
-        forceLink(simLinks).distance(layout.value.linkDistance),
-      )
-      .force('charge', forceManyBody().strength(charge))
-      .force('center', forceCenter(layout.value.centerX, layout.value.centerY))
-      .force('collide', forceCollide(24))
-      .alphaDecay(alphaDecay)
-      .on('tick', () => {
-        triggerRef(nodes)
-        onTickCallback?.()
-      })
-  }
-
-  function setOnTick(cb: () => void) {
-    onTickCallback = cb
-  }
-
-  function pinNode(hostId: number, x: number, y: number) {
+  /** Drag: free horizontally, clamped to the node's band vertically. */
+  function moveNode(hostId: number, x: number, y: number) {
     const node = nodes.value.find((n) => n.host.id === hostId)
     if (!node) return
-    node.pinned = true
+    const band = bands.value.find((b) => b.key === node.bandKey)
     node.x = x
-    node.y = y
-    const simNode = node as SimNode
-    simNode.fx = x
-    simNode.fy = y
+    if (band) {
+      const pad = 28
+      node.y = Math.max(band.y + pad, Math.min(band.y + band.height - pad, y))
+    } else {
+      node.y = y
+    }
   }
 
-  function unpinNode(hostId: number) {
-    const node = nodes.value.find((n) => n.host.id === hostId)
-    if (!node) return
-    node.pinned = false
-    const simNode = node as SimNode
-    simNode.fx = null
-    simNode.fy = null
+  function toggleFamily(family: ProtoFamily) {
+    const s = new Set(hiddenFamilies.value)
+    if (s.has(family)) s.delete(family)
+    else s.add(family)
+    hiddenFamilies.value = s
+  }
+
+  function toggleBand(key: string) {
+    const s = new Set(hiddenBands.value)
+    if (s.has(key)) s.delete(key)
+    else s.add(key)
+    hiddenBands.value = s
   }
 
   function selectNode(hostId: number | null) {
@@ -417,55 +338,41 @@ export const useTopologyStore = defineStore('topology', () => {
   }
 
   function reset() {
-    if (simulation) simulation.stop()
-    simulation = null
     nodes.value = []
     edges.value = []
+    bands.value = []
     selectedNodeId.value = null
     selectedEdgeId.value = null
     searchQuery.value = ''
-    expandedSubnets.value.clear()
-    clustered.value = false
-    trafficMin.value = 0
-    trafficMax.value = Infinity
-    rawHosts = []
-    rawConnections = []
-    onTickCallback = null
-  }
-
-  function updateCenter(cx: number, cy: number) {
-    layout.value.centerX = cx
-    layout.value.centerY = cy
-    if (simulation) {
-      simulation.force('center', forceCenter(cx, cy))
-      simulation.alpha(0.3).restart()
-    }
+    hiddenFamilies.value = new Set()
+    hiddenBands.value = new Set()
+    crossZoneOnly.value = false
   }
 
   return {
     nodes,
     edges,
+    bands,
+    layoutVersion,
     selectedNodeId,
     selectedEdgeId,
     searchQuery,
-    layout,
-    clustered,
+    hiddenFamilies,
+    hiddenBands,
+    crossZoneOnly,
+    presentFamilies,
+    crossZoneCount,
     filteredNodes,
     filteredEdges,
     matchedNodeIds,
-    packetCountRange,
-    trafficMin,
-    trafficMax,
     buildGraph,
-    setOnTick,
-    pinNode,
-    unpinNode,
+    refreshHost,
+    moveNode,
+    toggleFamily,
+    toggleBand,
     selectNode,
     selectEdge,
     clearSelection,
-    setTrafficFilter,
     reset,
-    updateCenter,
-    toggleCluster,
   }
 })
