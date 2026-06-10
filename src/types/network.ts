@@ -1,10 +1,44 @@
+export type Role =
+  | 'plc'
+  | 'scada'
+  | 'hmi'
+  | 'engineering-workstation'
+  | 'historian'
+  | 'field-device'
+  | 'network-gear'
+  | 'server'
+  | 'workstation'
+  | 'external'
+  | 'broadcast'
+  | 'unknown'
+  | 'subnet'
+
 export interface Host {
   id: number
   mac_address: string
   ip_address: string
-  device_type: string
+  hostname: string | null
+  vendor: string | null
+  role: Role
+  role_confidence: number
+  role_evidence: string | null
+  purdue_level: number | null
+  role_override: Role | null
+  level_override: number | null
+  protocols: string
+  is_external: boolean
   first_seen: number
   last_seen: number
+}
+
+/** Role after any user override. */
+export function effectiveRole(host: Host): Role {
+  return host.role_override ?? host.role
+}
+
+/** Purdue level after any user override; null means unplaced. */
+export function effectiveLevel(host: Host): number | null {
+  return host.level_override ?? host.purdue_level
 }
 
 export interface Connection {

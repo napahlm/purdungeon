@@ -82,10 +82,7 @@ function close() {
           </div>
           <div class="flex justify-between">
             <span class="text-text-secondary">Vendor</span>
-            <span
-              class="text-text-primary"
-              :class="{ 'text-accent': detail.host.device_type !== 'unknown' }"
-            >{{ detail.host.device_type }}</span>
+            <span class="text-text-primary">{{ detail.host.vendor ?? '—' }}</span>
           </div>
         </div>
       </div>

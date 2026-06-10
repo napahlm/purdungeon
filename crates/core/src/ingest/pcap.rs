@@ -386,10 +386,8 @@ fn upsert_host(
     }
     let id = queries::upsert_host_returning_id(conn, mac, ip, timestamp)?;
     if let Some(vendor) = oui::lookup_vendor(mac) {
-        conn.prepare_cached(
-            "UPDATE hosts SET device_type = ?1 WHERE id = ?2 AND device_type = 'unknown'",
-        )?
-        .execute(params![vendor, id])?;
+        conn.prepare_cached("UPDATE hosts SET vendor = ?1 WHERE id = ?2 AND vendor IS NULL")?
+            .execute(params![vendor, id])?;
     }
     host_map.insert(ip.to_string(), id);
     Ok(id)

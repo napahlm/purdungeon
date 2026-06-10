@@ -38,6 +38,8 @@ pub fn run() {
             commands::query::save_node_position,
             commands::query::get_host_detail,
             commands::query::get_connection_packets,
+            commands::query::set_role_override,
+            commands::query::set_level_override,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run coil-sniffer");

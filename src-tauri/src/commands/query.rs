@@ -44,6 +44,26 @@ pub fn get_host_detail(
 
 #[allow(clippy::needless_pass_by_value)]
 #[tauri::command]
+pub fn set_role_override(
+    host_id: i64,
+    role: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), CoreError> {
+    state.with_session(|s| s.set_role_override(host_id, role.as_deref()))
+}
+
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub fn set_level_override(
+    host_id: i64,
+    level: Option<i64>,
+    state: State<'_, AppState>,
+) -> Result<(), CoreError> {
+    state.with_session(|s| s.set_level_override(host_id, level))
+}
+
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
 pub fn get_connection_packets(
     connection_id: i64,
     limit: i64,

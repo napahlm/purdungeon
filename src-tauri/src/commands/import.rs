@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use coil_core::types::ImportResult;
+use coil_core::types::{ImportResult, ImportStage};
 use coil_core::{CoreError, Session};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
@@ -53,10 +53,15 @@ pub async fn import_pcap(
     });
 
     let progress_for_parser = Arc::clone(&progress);
-    let (session, import_result) =
-        tauri::async_runtime::spawn_blocking(move || Session::import(&pcap_path, &progress_for_parser))
-            .await
-            .map_err(|e| CoreError::Internal(format!("task join: {e}")))??;
+    let app_for_stages = app.clone();
+    let (session, import_result) = tauri::async_runtime::spawn_blocking(move || {
+        let on_stage = move |stage: ImportStage| {
+            let _ = app_for_stages.emit("import-stage", stage);
+        };
+        Session::import(&pcap_path, &progress_for_parser, &on_stage)
+    })
+    .await
+    .map_err(|e| CoreError::Internal(format!("task join: {e}")))??;
 
     // Signal completion and stop progress reporter
     progress.store(file_size, Ordering::Relaxed);

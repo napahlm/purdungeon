@@ -1,6 +1,7 @@
 //! Headless analysis core: pcap ingest, protocol parsing, and asset discovery.
 //! No UI dependencies — the Tauri shell (or a CLI) drives it through `Session`.
 
+pub mod analysis;
 pub mod error;
 pub mod ingest;
 pub mod oui;
@@ -13,7 +14,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 
 pub use error::CoreError;
-use types::{Connection, Host, HostDetail, ImportResult, Packet};
+use types::{Connection, Host, HostDetail, ImportResult, ImportStage, Packet};
 
 /// One imported capture: a temp `SQLite` database plus query access.
 /// Dropping the session removes the temp files.
@@ -23,12 +24,20 @@ pub struct Session {
 }
 
 impl Session {
-    /// Parse a pcap/pcapng file into a fresh session database.
-    /// `progress` is advanced by bytes consumed; callers may poll it
-    /// from another thread to report progress.
-    pub fn import(pcap_path: &Path, progress: &AtomicU64) -> Result<(Self, ImportResult), CoreError> {
+    /// Parse a pcap/pcapng file into a fresh session database, then run the
+    /// analysis pass (protocol naming, role and Purdue level inference).
+    /// `progress` is advanced by bytes consumed during the reading stage;
+    /// callers may poll it from another thread. `on_stage` fires as each
+    /// stage begins.
+    pub fn import(
+        pcap_path: &Path,
+        progress: &AtomicU64,
+        on_stage: &(dyn Fn(ImportStage) + Send + Sync),
+    ) -> Result<(Self, ImportResult), CoreError> {
         let (conn, db_path) = store::schema::init_db()?;
+        on_stage(ImportStage::ReadingPackets);
         let result = ingest::pcap::parse_pcap(pcap_path, &conn, progress)?;
+        analysis::run(&conn, on_stage)?;
         Ok((
             Self {
                 conn: Arc::new(Mutex::new(conn)),
@@ -71,6 +80,14 @@ impl Session {
 
     pub fn save_node_position(&self, host_id: i64, x: f64, y: f64) -> Result<(), CoreError> {
         self.with_conn(|c| store::queries::save_node_position(c, host_id, x, y))
+    }
+
+    pub fn set_role_override(&self, host_id: i64, role: Option<&str>) -> Result<(), CoreError> {
+        self.with_conn(|c| store::queries::set_role_override(c, host_id, role))
+    }
+
+    pub fn set_level_override(&self, host_id: i64, level: Option<i64>) -> Result<(), CoreError> {
+        self.with_conn(|c| store::queries::set_level_override(c, host_id, level))
     }
 }
 

@@ -1,5 +1,16 @@
 use serde::Serialize;
 
+/// Stages of an import, in order. Each one reflects real work; the UI shows
+/// them as the loading sequence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ImportStage {
+    ReadingPackets,
+    IdentifyingDevices,
+    MappingConversations,
+    InferringRoles,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ImportResult {
     pub host_count: usize,
@@ -13,7 +24,16 @@ pub struct Host {
     pub id: i64,
     pub mac_address: String,
     pub ip_address: String,
-    pub device_type: String,
+    pub hostname: Option<String>,
+    pub vendor: Option<String>,
+    pub role: String,
+    pub role_confidence: f64,
+    pub role_evidence: Option<String>,
+    pub purdue_level: Option<i64>,
+    pub role_override: Option<String>,
+    pub level_override: Option<i64>,
+    pub protocols: String,
+    pub is_external: bool,
     pub first_seen: f64,
     pub last_seen: f64,
 }

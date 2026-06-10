@@ -28,25 +28,62 @@ pub fn upsert_host_returning_id(
     Ok(id)
 }
 
+const HOST_COLUMNS: &str = "id, mac_address, ip_address, hostname, vendor, role,
+    role_confidence, role_evidence, purdue_level, role_override, level_override,
+    protocols, is_external, first_seen, last_seen";
+
+fn host_from_row(row: &rusqlite::Row) -> Result<Host, rusqlite::Error> {
+    Ok(Host {
+        id: row.get(0)?,
+        mac_address: row.get(1)?,
+        ip_address: row.get(2)?,
+        hostname: row.get(3)?,
+        vendor: row.get(4)?,
+        role: row.get(5)?,
+        role_confidence: row.get(6)?,
+        role_evidence: row.get(7)?,
+        purdue_level: row.get(8)?,
+        role_override: row.get(9)?,
+        level_override: row.get(10)?,
+        protocols: row.get(11)?,
+        is_external: row.get::<_, i64>(12)? != 0,
+        first_seen: row.get(13)?,
+        last_seen: row.get(14)?,
+    })
+}
+
 pub fn get_all_hosts(conn: &Connection) -> Result<Vec<Host>, CoreError> {
-    let mut stmt = conn.prepare(
-        "SELECT id, mac_address, ip_address, device_type, first_seen, last_seen FROM hosts",
-    )?;
-    let rows = stmt.query_map([], |row| {
-        Ok(Host {
-            id: row.get(0)?,
-            mac_address: row.get(1)?,
-            ip_address: row.get(2)?,
-            device_type: row.get(3)?,
-            first_seen: row.get(4)?,
-            last_seen: row.get(5)?,
-        })
-    })?;
+    let mut stmt = conn.prepare(&format!("SELECT {HOST_COLUMNS} FROM hosts"))?;
+    let rows = stmt.query_map([], host_from_row)?;
     let mut hosts = Vec::new();
     for row in rows {
         hosts.push(row?);
     }
     Ok(hosts)
+}
+
+pub fn set_role_override(
+    conn: &Connection,
+    host_id: i64,
+    role: Option<&str>,
+) -> Result<(), CoreError> {
+    conn.execute(
+        "UPDATE hosts SET role_override = ?1 WHERE id = ?2",
+        params![role, host_id],
+    )?;
+    Ok(())
+}
+
+pub fn set_level_override(
+    conn: &Connection,
+    host_id: i64,
+    level: Option<i64>,
+) -> Result<(), CoreError> {
+    conn.execute(
+        "UPDATE hosts SET level_override = ?1 WHERE id = ?2",
+        params![level, host_id],
+    )?;
+    Ok(())
 }
 
 pub fn get_all_connections(conn: &Connection) -> Result<Vec<NetConnection>, CoreError> {
@@ -100,19 +137,9 @@ pub fn save_node_position(
 
 pub fn get_host_detail(conn: &Connection, host_id: i64) -> Result<HostDetail, CoreError> {
     let host = conn.query_row(
-        "SELECT id, mac_address, ip_address, device_type, first_seen, last_seen
-         FROM hosts WHERE id = ?1",
+        &format!("SELECT {HOST_COLUMNS} FROM hosts WHERE id = ?1"),
         params![host_id],
-        |row| {
-            Ok(Host {
-                id: row.get(0)?,
-                mac_address: row.get(1)?,
-                ip_address: row.get(2)?,
-                device_type: row.get(3)?,
-                first_seen: row.get(4)?,
-                last_seen: row.get(5)?,
-            })
-        },
+        host_from_row,
     )?;
 
     let mut stmt = conn.prepare(

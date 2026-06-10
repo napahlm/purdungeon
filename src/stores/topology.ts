@@ -124,7 +124,8 @@ export const useTopologyStore = defineStore('topology', () => {
       if (
         h.ip_address.toLowerCase().includes(q) ||
         h.mac_address.toLowerCase().includes(q) ||
-        h.device_type.toLowerCase().includes(q)
+        h.role.toLowerCase().includes(q) ||
+        (h.vendor ?? '').toLowerCase().includes(q)
       ) {
         matched.add(h.id)
       }
@@ -242,7 +243,16 @@ export const useTopologyStore = defineStore('topology', () => {
           id: cId,
           mac_address: '',
           ip_address: `${subnet}.0/24`,
-          device_type: 'subnet',
+          hostname: null,
+          vendor: null,
+          role: 'subnet',
+          role_confidence: 1,
+          role_evidence: null,
+          purdue_level: null,
+          role_override: null,
+          level_override: null,
+          protocols: '',
+          is_external: false,
           first_seen: Math.min(...hosts.map((h) => h.first_seen)),
           last_seen: Math.max(...hosts.map((h) => h.last_seen)),
         }

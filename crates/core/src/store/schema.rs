@@ -20,7 +20,16 @@ pub fn init_db() -> Result<(Connection, PathBuf), CoreError> {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             mac_address TEXT NOT NULL,
             ip_address TEXT NOT NULL UNIQUE,
-            device_type TEXT NOT NULL DEFAULT 'unknown',
+            hostname TEXT,
+            vendor TEXT,
+            role TEXT NOT NULL DEFAULT 'unknown',
+            role_confidence REAL NOT NULL DEFAULT 0,
+            role_evidence TEXT,
+            purdue_level INTEGER,
+            role_override TEXT,
+            level_override INTEGER,
+            protocols TEXT NOT NULL DEFAULT '',
+            is_external INTEGER NOT NULL DEFAULT 0,
             first_seen REAL NOT NULL,
             last_seen REAL NOT NULL
         );
