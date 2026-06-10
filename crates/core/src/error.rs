@@ -1,7 +1,7 @@
 use serde::Serialize;
 
 #[derive(Debug, thiserror::Error)]
-pub enum CoilSnifferError {
+pub enum CoreError {
     #[error("parse error: {0}")]
     Parse(String),
 
@@ -10,9 +10,12 @@ pub enum CoilSnifferError {
 
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+
+    #[error("internal error: {0}")]
+    Internal(String),
 }
 
-impl Serialize for CoilSnifferError {
+impl Serialize for CoreError {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,

@@ -1,0 +1,19 @@
+[package]
+name = "coil-core"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "coil_core"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+pcap-parser = "0.16"
+etherparse = "0.16"
+rusqlite = { version = "0.34", features = ["bundled"] }
+thiserror = "2"
+toml = "0.8"
+uuid = { version = "1", features = ["v4"] }

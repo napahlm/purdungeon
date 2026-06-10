@@ -1,21 +1,13 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
+use coil_core::types::ImportResult;
+use coil_core::{CoreError, Session};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
-use crate::db::schema;
-use crate::parser::pcap;
-use crate::{AppState, DbHandle, CoilSnifferError};
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ImportResult {
-    pub host_count: usize,
-    pub connection_count: usize,
-    pub packet_count: usize,
-    pub time_range: (f64, f64),
-}
+use crate::AppState;
 
 #[derive(Clone, Serialize)]
 struct ImportProgress {
@@ -29,11 +21,14 @@ pub async fn import_pcap(
     path: String,
     state: State<'_, AppState>,
     app: AppHandle,
-) -> Result<ImportResult, CoilSnifferError> {
-    // Drop previous DB (cleans up temp file via DbHandle::drop)
+) -> Result<ImportResult, CoreError> {
+    // Drop previous session (cleans up its temp DB on drop)
     {
-        let mut db_lock = state.db.lock().map_err(|e| CoilSnifferError::Parse(e.to_string()))?;
-        *db_lock = None;
+        let mut lock = state
+            .session
+            .lock()
+            .map_err(|e| CoreError::Internal(e.to_string()))?;
+        *lock = None;
     }
 
     let pcap_path = PathBuf::from(&path);
@@ -58,17 +53,10 @@ pub async fn import_pcap(
     });
 
     let progress_for_parser = Arc::clone(&progress);
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        let (conn, db_path) = schema::init_db()?;
-        let conn = Arc::new(Mutex::new(conn));
-        let parse_result = pcap::parse_pcap(&pcap_path, &conn, &progress_for_parser)?;
-        Ok::<_, CoilSnifferError>((conn, db_path, parse_result))
-    })
-    .await
-    .map_err(|e| CoilSnifferError::Parse(format!("task join: {e}")))??
-    ;
-
-    let (conn, db_path, import_result) = result;
+    let (session, import_result) =
+        tauri::async_runtime::spawn_blocking(move || Session::import(&pcap_path, &progress_for_parser))
+            .await
+            .map_err(|e| CoreError::Internal(format!("task join: {e}")))??;
 
     // Signal completion and stop progress reporter
     progress.store(file_size, Ordering::Relaxed);
@@ -78,8 +66,11 @@ pub async fn import_pcap(
     });
     let _ = progress_task.await;
 
-    let mut db_lock = state.db.lock().map_err(|e| CoilSnifferError::Parse(e.to_string()))?;
-    *db_lock = Some(DbHandle { conn, path: db_path });
+    let mut lock = state
+        .session
+        .lock()
+        .map_err(|e| CoreError::Internal(e.to_string()))?;
+    *lock = Some(session);
 
     Ok(import_result)
 }

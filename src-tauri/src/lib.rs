@@ -1,36 +1,26 @@
 mod commands;
-mod db;
-mod error;
-mod oui;
-mod parser;
-mod protocols;
 
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
-pub use error::CoilSnifferError;
-
-pub struct DbHandle {
-    pub conn: Arc<Mutex<rusqlite::Connection>>,
-    pub path: PathBuf,
-}
-
-impl Drop for DbHandle {
-    fn drop(&mut self) {
-        db::schema::cleanup_db(&self.path);
-    }
-}
+use coil_core::{CoreError, Session};
 
 pub struct AppState {
-    pub db: Mutex<Option<DbHandle>>,
+    pub session: Mutex<Option<Session>>,
 }
 
 impl AppState {
-    pub fn get_conn(&self) -> Result<Arc<Mutex<rusqlite::Connection>>, CoilSnifferError> {
-        let lock = self.db.lock().map_err(|e| CoilSnifferError::Parse(e.to_string()))?;
-        lock.as_ref()
-            .map(|h| Arc::clone(&h.conn))
-            .ok_or_else(|| CoilSnifferError::Parse("no database loaded".into()))
+    pub fn with_session<T>(
+        &self,
+        f: impl FnOnce(&Session) -> Result<T, CoreError>,
+    ) -> Result<T, CoreError> {
+        let lock = self
+            .session
+            .lock()
+            .map_err(|e| CoreError::Internal(e.to_string()))?;
+        let session = lock
+            .as_ref()
+            .ok_or_else(|| CoreError::Internal("no capture loaded".into()))?;
+        f(session)
     }
 }
 
@@ -38,7 +28,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
-            db: Mutex::new(None),
+            session: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             commands::import::import_pcap,

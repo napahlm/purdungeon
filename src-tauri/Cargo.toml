@@ -3,31 +3,16 @@ name = "coil-sniffer"
 version = "0.1.0"
 edition = "2021"
 
-[lints.clippy]
-all = { level = "warn", priority = -1 }
-pedantic = { level = "warn", priority = -1 }
-cast_possible_truncation = "allow"
-cast_precision_loss = "allow"
-cast_sign_loss = "allow"
-cast_possible_wrap = "allow"
-missing_errors_doc = "allow"
-missing_panics_doc = "allow"
-module_name_repetitions = "allow"
-too_many_arguments = "allow"
-wildcard_imports = "allow"
+[lints]
+workspace = true
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+coil-core = { path = "../crates/core" }
 tauri = { version = "2", features = ["devtools"] }
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-pcap-parser = "0.16"
-etherparse = "0.16"
-rusqlite = { version = "0.34", features = ["bundled"] }
-thiserror = "2"
 tokio = { version = "1", features = ["time"] }
-toml = "0.8"
-uuid = { version = "1", features = ["v4"] }

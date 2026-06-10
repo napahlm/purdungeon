@@ -2,9 +2,9 @@ use std::path::PathBuf;
 
 use rusqlite::Connection;
 
-use crate::CoilSnifferError;
+use crate::CoreError;
 
-pub fn init_db() -> Result<(Connection, PathBuf), CoilSnifferError> {
+pub fn init_db() -> Result<(Connection, PathBuf), CoreError> {
     let db_path = std::env::temp_dir().join(format!("coil-sniffer-{}.db", uuid::Uuid::new_v4()));
     let conn = Connection::open(&db_path)?;
 
@@ -67,7 +67,7 @@ pub fn cleanup_db(path: &std::path::Path) {
     let _ = std::fs::remove_file(path.with_extension("db-shm"));
 }
 
-pub fn clear_data(conn: &Connection) -> Result<(), CoilSnifferError> {
+pub fn clear_data(conn: &Connection) -> Result<(), CoreError> {
     conn.execute_batch(
         "DELETE FROM packets;
          DELETE FROM connections;
@@ -77,7 +77,7 @@ pub fn clear_data(conn: &Connection) -> Result<(), CoilSnifferError> {
     Ok(())
 }
 
-pub fn drop_packet_indexes(conn: &Connection) -> Result<(), CoilSnifferError> {
+pub fn drop_packet_indexes(conn: &Connection) -> Result<(), CoreError> {
     conn.execute_batch(
         "DROP INDEX IF EXISTS idx_packets_timestamp;
          DROP INDEX IF EXISTS idx_packets_connection;",
@@ -85,7 +85,7 @@ pub fn drop_packet_indexes(conn: &Connection) -> Result<(), CoilSnifferError> {
     Ok(())
 }
 
-pub fn create_packet_indexes(conn: &Connection) -> Result<(), CoilSnifferError> {
+pub fn create_packet_indexes(conn: &Connection) -> Result<(), CoreError> {
     conn.execute_batch(
         "CREATE INDEX IF NOT EXISTS idx_packets_timestamp ON packets(timestamp);
          CREATE INDEX IF NOT EXISTS idx_packets_connection ON packets(connection_id);",

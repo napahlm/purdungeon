@@ -1,7 +1,7 @@
 use rusqlite::{params, Connection};
 
-use crate::commands::query::{Connection as NetConnection, Host, HostConnection, HostDetail, Packet};
-use crate::CoilSnifferError;
+use crate::types::{Connection as NetConnection, Host, HostConnection, HostDetail, Packet};
+use crate::CoreError;
 
 // ── Bulk-import helper: upsert host and return correct id ────────────────────
 
@@ -10,7 +10,7 @@ pub fn upsert_host_returning_id(
     mac: &str,
     ip: &str,
     timestamp: f64,
-) -> Result<i64, CoilSnifferError> {
+) -> Result<i64, CoreError> {
     conn.execute(
         "INSERT INTO hosts (mac_address, ip_address, first_seen, last_seen)
          VALUES (?1, ?2, ?3, ?3)
@@ -28,7 +28,7 @@ pub fn upsert_host_returning_id(
     Ok(id)
 }
 
-pub fn get_all_hosts(conn: &Connection) -> Result<Vec<Host>, CoilSnifferError> {
+pub fn get_all_hosts(conn: &Connection) -> Result<Vec<Host>, CoreError> {
     let mut stmt = conn.prepare(
         "SELECT id, mac_address, ip_address, device_type, first_seen, last_seen FROM hosts",
     )?;
@@ -49,7 +49,7 @@ pub fn get_all_hosts(conn: &Connection) -> Result<Vec<Host>, CoilSnifferError> {
     Ok(hosts)
 }
 
-pub fn get_all_connections(conn: &Connection) -> Result<Vec<NetConnection>, CoilSnifferError> {
+pub fn get_all_connections(conn: &Connection) -> Result<Vec<NetConnection>, CoreError> {
     let mut stmt = conn.prepare(
         "SELECT id, src_host_id, dst_host_id, src_port, dst_port, protocol,
                 app_protocol, packet_count, byte_count, first_seen, last_seen
@@ -77,7 +77,7 @@ pub fn get_all_connections(conn: &Connection) -> Result<Vec<NetConnection>, Coil
     Ok(connections)
 }
 
-pub fn get_time_range(conn: &Connection) -> Result<(f64, f64), CoilSnifferError> {
+pub fn get_time_range(conn: &Connection) -> Result<(f64, f64), CoreError> {
     let mut stmt = conn
         .prepare("SELECT COALESCE(MIN(timestamp), 0), COALESCE(MAX(timestamp), 0) FROM packets")?;
     let range = stmt.query_row([], |row| Ok((row.get(0)?, row.get(1)?)))?;
@@ -89,7 +89,7 @@ pub fn save_node_position(
     host_id: i64,
     x: f64,
     y: f64,
-) -> Result<(), CoilSnifferError> {
+) -> Result<(), CoreError> {
     conn.execute(
         "INSERT INTO node_positions (host_id, x, y) VALUES (?1, ?2, ?3)
          ON CONFLICT(host_id) DO UPDATE SET x = ?2, y = ?3",
@@ -98,7 +98,7 @@ pub fn save_node_position(
     Ok(())
 }
 
-pub fn get_host_detail(conn: &Connection, host_id: i64) -> Result<HostDetail, CoilSnifferError> {
+pub fn get_host_detail(conn: &Connection, host_id: i64) -> Result<HostDetail, CoreError> {
     let host = conn.query_row(
         "SELECT id, mac_address, ip_address, device_type, first_seen, last_seen
          FROM hosts WHERE id = ?1",
@@ -163,7 +163,7 @@ pub fn get_connection_packets(
     conn: &Connection,
     connection_id: i64,
     limit: i64,
-) -> Result<Vec<Packet>, CoilSnifferError> {
+) -> Result<Vec<Packet>, CoreError> {
     let mut stmt = conn.prepare(
         "SELECT id, timestamp, src_ip, dst_ip, src_port, dst_port, protocol, length
          FROM packets

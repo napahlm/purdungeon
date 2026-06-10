@@ -5,6 +5,7 @@
 /// - Payload is at least 7 bytes (minimum MBAP header)
 /// - MBAP protocol identifier (bytes 2-3) is 0x0000
 /// - MBAP length field (bytes 4-5) is between 1 and 253
+#[must_use]
 pub fn is_modbus_tcp(src_port: u16, dst_port: u16, payload: &[u8]) -> bool {
     if src_port != 502 && dst_port != 502 {
         return false;

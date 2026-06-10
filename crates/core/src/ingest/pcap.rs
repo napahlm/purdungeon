@@ -3,32 +3,29 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
 
 use pcap_parser::traits::PcapReaderIterator;
 use pcap_parser::*;
 use rusqlite::params;
 
-use crate::commands::import::ImportResult;
-use crate::db::{queries, schema};
+use crate::types::ImportResult;
+use crate::store::{queries, schema};
 use crate::oui;
 use crate::protocols::modbus;
-use crate::CoilSnifferError;
+use crate::CoreError;
 
 pub fn parse_pcap(
     path: &Path,
-    db: &Arc<Mutex<rusqlite::Connection>>,
+    conn: &rusqlite::Connection,
     progress: &AtomicU64,
-) -> Result<ImportResult, CoilSnifferError> {
+) -> Result<ImportResult, CoreError> {
     let mut file = File::open(path)?;
     let mut buf = Vec::new();
     file.read_to_end(&mut buf)?;
 
-    let conn = db.lock().map_err(|e| CoilSnifferError::Parse(e.to_string()))?;
-
     // Clear stale data and drop indexes for fast bulk insert
-    schema::clear_data(&conn)?;
-    schema::drop_packet_indexes(&conn)?;
+    schema::clear_data(conn)?;
+    schema::drop_packet_indexes(conn)?;
 
     // Single transaction for the entire import
     conn.execute_batch("BEGIN EXCLUSIVE")?;
@@ -41,7 +38,7 @@ pub fn parse_pcap(
 
     if buf.len() < 4 {
         conn.execute_batch("ROLLBACK")?;
-        return Err(CoilSnifferError::Parse("file too small".into()));
+        return Err(CoreError::Parse("file too small".into()));
     }
 
     let magic = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
@@ -49,12 +46,12 @@ pub fn parse_pcap(
 
     let result = if is_pcapng {
         parse_pcapng_data(
-            &buf, &conn, &mut host_map, &mut conn_map,
+            &buf, conn, &mut host_map, &mut conn_map,
             &mut packet_count, &mut min_ts, &mut max_ts, progress,
         )
     } else {
         parse_legacy_data(
-            &buf, &conn, &mut host_map, &mut conn_map,
+            &buf, conn, &mut host_map, &mut conn_map,
             &mut packet_count, &mut min_ts, &mut max_ts, progress,
         )
     };
@@ -65,7 +62,7 @@ pub fn parse_pcap(
     }
 
     // Recreate indexes after all data is inserted
-    schema::create_packet_indexes(&conn)?;
+    schema::create_packet_indexes(conn)?;
 
     conn.execute_batch("COMMIT")?;
 
@@ -92,9 +89,9 @@ fn parse_pcapng_data(
     min_ts: &mut f64,
     max_ts: &mut f64,
     progress: &AtomicU64,
-) -> Result<(), CoilSnifferError> {
+) -> Result<(), CoreError> {
     let mut reader = PcapNGReader::new(65536, std::io::Cursor::new(data))
-        .map_err(|e| CoilSnifferError::Parse(format!("pcapng reader: {e}")))?;
+        .map_err(|e| CoreError::Parse(format!("pcapng reader: {e}")))?;
 
     let mut if_info: Vec<(u64, u64)> = Vec::new();
 
@@ -133,9 +130,9 @@ fn parse_pcapng_data(
             Err(PcapError::Incomplete(_)) => {
                 reader
                     .refill()
-                    .map_err(|e| CoilSnifferError::Parse(format!("refill: {e}")))?;
+                    .map_err(|e| CoreError::Parse(format!("refill: {e}")))?;
             }
-            Err(e) => return Err(CoilSnifferError::Parse(format!("pcapng: {e}"))),
+            Err(e) => return Err(CoreError::Parse(format!("pcapng: {e}"))),
         }
     }
     Ok(())
@@ -151,9 +148,9 @@ fn parse_legacy_data(
     min_ts: &mut f64,
     max_ts: &mut f64,
     progress: &AtomicU64,
-) -> Result<(), CoilSnifferError> {
+) -> Result<(), CoreError> {
     let mut reader = LegacyPcapReader::new(65536, std::io::Cursor::new(data))
-        .map_err(|e| CoilSnifferError::Parse(format!("pcap reader: {e}")))?;
+        .map_err(|e| CoreError::Parse(format!("pcap reader: {e}")))?;
 
     loop {
         match reader.next() {
@@ -172,9 +169,9 @@ fn parse_legacy_data(
             Err(PcapError::Incomplete(_)) => {
                 reader
                     .refill()
-                    .map_err(|e| CoilSnifferError::Parse(format!("refill: {e}")))?;
+                    .map_err(|e| CoreError::Parse(format!("refill: {e}")))?;
             }
-            Err(e) => return Err(CoilSnifferError::Parse(format!("pcap: {e}"))),
+            Err(e) => return Err(CoreError::Parse(format!("pcap: {e}"))),
         }
     }
     Ok(())
@@ -190,7 +187,7 @@ fn process_packet(
     packet_count: &mut usize,
     min_ts: &mut f64,
     max_ts: &mut f64,
-) -> Result<(), CoilSnifferError> {
+) -> Result<(), CoreError> {
     let Ok(parsed) = etherparse::SlicedPacket::from_ethernet(data) else {
         return Ok(());
     };
@@ -296,7 +293,7 @@ fn upsert_host(
     ip: &str,
     mac: &str,
     timestamp: f64,
-) -> Result<i64, CoilSnifferError> {
+) -> Result<i64, CoreError> {
     if let Some(&id) = host_map.get(ip) {
         conn.prepare_cached(
             "UPDATE hosts SET
