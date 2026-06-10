@@ -8,6 +8,7 @@ export type ImportStage =
   | 'identifying-devices'
   | 'mapping-conversations'
   | 'inferring-roles'
+  | 'surfacing-findings'
   | 'building-view'
 
 export const IMPORT_STAGES: { id: ImportStage; label: string }[] = [
@@ -15,6 +16,7 @@ export const IMPORT_STAGES: { id: ImportStage; label: string }[] = [
   { id: 'identifying-devices', label: 'Identifying devices' },
   { id: 'mapping-conversations', label: 'Mapping conversations' },
   { id: 'inferring-roles', label: 'Inferring roles' },
+  { id: 'surfacing-findings', label: 'Looking for findings' },
   { id: 'building-view', label: 'Building the view' },
 ]
 

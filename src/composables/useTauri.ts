@@ -8,6 +8,7 @@ import type {
   Packet,
   ModbusHostActivity,
   ModbusConversation,
+  Finding,
   Role,
 } from '@/types/network'
 import { useAppStore, type ImportStage } from '@/stores/app'
@@ -62,6 +63,10 @@ export function useTauri() {
     return invoke<Packet[]>('get_connection_packets', { connectionId, limit })
   }
 
+  async function getFindings(): Promise<Finding[]> {
+    return invoke<Finding[]>('get_findings')
+  }
+
   async function getModbusHostActivity(hostId: number): Promise<ModbusHostActivity> {
     return invoke<ModbusHostActivity>('get_modbus_host_activity', { hostId })
   }
@@ -109,13 +114,15 @@ export function useTauri() {
         return
       }
       appStore.setStage('building-view')
-      const [hosts, connections, timeRange] = await Promise.all([
+      const [hosts, connections, timeRange, findings] = await Promise.all([
         getHosts(),
         getConnections(),
         getTimeRange(),
+        getFindings(),
       ])
       timelineStore.setFullRange(timeRange[0], timeRange[1])
       topologyStore.buildGraph(hosts, connections)
+      topologyStore.findings = findings
       appStore.setLoadedFile(path)
     } catch (e) {
       appStore.setError(humanizeError(e instanceof Error ? e.message : String(e)))
@@ -134,6 +141,7 @@ export function useTauri() {
     saveNodePosition,
     getHostDetail,
     getConnectionPackets,
+    getFindings,
     getModbusHostActivity,
     getModbusConversation,
     setRoleOverride,

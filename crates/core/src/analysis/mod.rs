@@ -2,6 +2,7 @@
 //! Purdue level placement. Runs once per import, writes results back into
 //! the session database so the UI only ever queries.
 
+mod findings;
 mod ports;
 mod roles;
 
@@ -23,6 +24,9 @@ pub fn run(
 
     on_stage(ImportStage::InferringRoles);
     roles::infer_and_store(conn, &profiles)?;
+
+    on_stage(ImportStage::SurfacingFindings);
+    findings::generate(conn)?;
 
     Ok(())
 }

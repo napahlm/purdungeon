@@ -130,22 +130,32 @@ function updateEdgesFor(hostId: number) {
 function updateStyles() {
   const searching = topology.searchQuery.trim().length > 0
   const matched = topology.matchedNodeIds
+  const finding = topology.activeFinding
+  const findingHosts = new Set(finding?.host_ids ?? [])
+  const findingConns = new Set(finding?.connection_ids ?? [])
 
   for (const node of topology.filteredNodes) {
     const group = nodeGroups.get(node.host.id)
-    if (group) {
-      let searchState: 'match' | 'dim' | 'none' = 'none'
-      if (searching) {
-        searchState = matched.has(node.host.id) ? 'match' : 'dim'
-      }
-      updateNodeGroup(group, node, node.host.id === topology.selectedNodeId, searchState)
+    if (!group) continue
+    let state: 'match' | 'dim' | 'none' = 'none'
+    if (finding && findingHosts.size > 0) {
+      state = findingHosts.has(node.host.id) ? 'match' : 'dim'
+    } else if (searching) {
+      state = matched.has(node.host.id) ? 'match' : 'dim'
     }
+    updateNodeGroup(group, node, node.host.id === topology.selectedNodeId, state)
   }
 
   for (const edge of topology.filteredEdges) {
     const line = edgeLines.get(edge.connection.id)
-    if (line) {
-      updateEdgeLine(line, edge, edge.connection.id === topology.selectedEdgeId)
+    if (!line) continue
+    updateEdgeLine(line, edge, edge.connection.id === topology.selectedEdgeId)
+    if (finding && findingConns.size > 0) {
+      if (findingConns.has(edge.connection.id)) {
+        line.opacity(1)
+      } else {
+        line.opacity(0.06)
+      }
     }
   }
 
@@ -171,6 +181,7 @@ watch(
 
 watch(() => [topology.selectedNodeId, topology.selectedEdgeId], () => updateStyles())
 watch(() => topology.searchQuery, () => updateStyles())
+watch(() => topology.activeFindingId, () => updateStyles())
 
 // Click on empty canvas clears the selection
 watch(stage, (s) => {

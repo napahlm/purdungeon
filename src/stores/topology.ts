@@ -1,6 +1,6 @@
 import { ref, computed, shallowRef } from 'vue'
 import { defineStore } from 'pinia'
-import type { Host, Connection } from '@/types/network'
+import type { Host, Connection, Finding } from '@/types/network'
 import { effectiveLevel, effectiveRole } from '@/types/network'
 import type { CanvasNode, CanvasEdge, BandLayout } from '@/types/canvas'
 import {
@@ -143,6 +143,28 @@ export const useTopologyStore = defineStore('topology', () => {
   const hiddenFamilies = ref(new Set<ProtoFamily>())
   const hiddenBands = ref(new Set<string>())
   const crossZoneOnly = ref(false)
+
+  // Findings and the highlight they drive on the canvas
+  const findings = ref<Finding[]>([])
+  const activeFindingId = ref<number | null>(null)
+
+  const activeFinding = computed(
+    () => findings.value.find((f) => f.id === activeFindingId.value) ?? null,
+  )
+
+  function toggleFinding(finding: Finding) {
+    if (activeFindingId.value === finding.id) {
+      activeFindingId.value = null
+      return
+    }
+    activeFindingId.value = finding.id
+    // A finding about exactly one conversation opens its detail directly
+    if (finding.connection_ids.length === 1) {
+      selectEdge(finding.connection_ids[0])
+    } else if (finding.host_ids.length === 1) {
+      selectNode(finding.host_ids[0])
+    }
+  }
 
   const timelineStore = useTimelineStore()
 
@@ -335,6 +357,7 @@ export const useTopologyStore = defineStore('topology', () => {
   function clearSelection() {
     selectedNodeId.value = null
     selectedEdgeId.value = null
+    activeFindingId.value = null
   }
 
   function reset() {
@@ -347,6 +370,8 @@ export const useTopologyStore = defineStore('topology', () => {
     hiddenFamilies.value = new Set()
     hiddenBands.value = new Set()
     crossZoneOnly.value = false
+    findings.value = []
+    activeFindingId.value = null
   }
 
   return {
@@ -360,6 +385,10 @@ export const useTopologyStore = defineStore('topology', () => {
     hiddenFamilies,
     hiddenBands,
     crossZoneOnly,
+    findings,
+    activeFindingId,
+    activeFinding,
+    toggleFinding,
     presentFamilies,
     crossZoneCount,
     filteredNodes,

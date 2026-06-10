@@ -9,6 +9,18 @@ pub enum ImportStage {
     IdentifyingDevices,
     MappingConversations,
     InferringRoles,
+    SurfacingFindings,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Finding {
+    pub id: i64,
+    pub kind: String,
+    pub severity: String,
+    pub title: String,
+    pub detail: String,
+    pub host_ids: Vec<i64>,
+    pub connection_ids: Vec<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]

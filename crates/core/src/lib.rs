@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 
 pub use error::CoreError;
 use types::{
-    Connection, Host, HostDetail, ImportResult, ImportStage, ModbusConversation,
+    Connection, Finding, Host, HostDetail, ImportResult, ImportStage, ModbusConversation,
     ModbusHostActivity, Packet,
 };
 
@@ -83,6 +83,10 @@ impl Session {
 
     pub fn save_node_position(&self, host_id: i64, x: f64, y: f64) -> Result<(), CoreError> {
         self.with_conn(|c| store::queries::save_node_position(c, host_id, x, y))
+    }
+
+    pub fn findings(&self) -> Result<Vec<Finding>, CoreError> {
+        self.with_conn(store::queries::get_findings)
     }
 
     pub fn modbus_host_activity(&self, host_id: i64) -> Result<ModbusHostActivity, CoreError> {

@@ -153,6 +153,16 @@ export interface ModbusConversation {
   poll_interval_ms: number | null
 }
 
+export interface Finding {
+  id: number
+  kind: string
+  severity: 'high' | 'medium' | 'info'
+  title: string
+  detail: string
+  host_ids: number[]
+  connection_ids: number[]
+}
+
 export interface ImportResult {
   host_count: number
   connection_count: number

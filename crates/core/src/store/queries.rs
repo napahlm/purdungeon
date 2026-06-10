@@ -62,6 +62,42 @@ pub fn get_all_hosts(conn: &Connection) -> Result<Vec<Host>, CoreError> {
     Ok(hosts)
 }
 
+pub fn get_findings(conn: &Connection) -> Result<Vec<crate::types::Finding>, CoreError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, kind, severity, title, detail, host_ids, connection_ids
+         FROM findings
+         ORDER BY CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, id",
+    )?;
+    let parse_ids = |s: String| -> Vec<i64> {
+        s.split(',').filter_map(|p| p.parse().ok()).collect()
+    };
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, String>(4)?,
+            row.get::<_, String>(5)?,
+            row.get::<_, String>(6)?,
+        ))
+    })?;
+    let mut findings = Vec::new();
+    for row in rows {
+        let (id, kind, severity, title, detail, host_ids, connection_ids) = row?;
+        findings.push(crate::types::Finding {
+            id,
+            kind,
+            severity,
+            title,
+            detail,
+            host_ids: parse_ids(host_ids),
+            connection_ids: parse_ids(connection_ids),
+        });
+    }
+    Ok(findings)
+}
+
 pub fn set_role_override(
     conn: &Connection,
     host_id: i64,

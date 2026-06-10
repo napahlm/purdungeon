@@ -77,6 +77,16 @@ pub fn init_db() -> Result<(Connection, PathBuf), CoreError> {
             is_write INTEGER NOT NULL DEFAULT 0
         );
 
+        CREATE TABLE IF NOT EXISTS findings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind TEXT NOT NULL,
+            severity TEXT NOT NULL,
+            title TEXT NOT NULL,
+            detail TEXT NOT NULL,
+            host_ids TEXT NOT NULL DEFAULT '',
+            connection_ids TEXT NOT NULL DEFAULT ''
+        );
+
         CREATE TABLE IF NOT EXISTS node_positions (
             host_id INTEGER PRIMARY KEY REFERENCES hosts(id),
             x REAL NOT NULL,
@@ -99,6 +109,7 @@ pub fn clear_data(conn: &Connection) -> Result<(), CoreError> {
          DELETE FROM connections;
          DELETE FROM hosts;
          DELETE FROM modbus_events;
+         DELETE FROM findings;
          DELETE FROM node_positions;",
     )?;
     Ok(())

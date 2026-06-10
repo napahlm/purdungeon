@@ -10,6 +10,7 @@ import NodeDetailPanel from '@/components/NodeDetailPanel.vue'
 import EdgeDetailPanel from '@/components/EdgeDetailPanel.vue'
 import SearchBar from '@/components/SearchBar.vue'
 import FilterBar from '@/components/FilterBar.vue'
+import FindingsPanel from '@/components/FindingsPanel.vue'
 
 const appStore = useAppStore()
 const topology = useTopologyStore()
@@ -29,6 +30,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
     <template v-if="appStore.loadedFile">
       <AppHeader />
       <div class="relative flex flex-1 overflow-hidden">
+        <FindingsPanel />
         <TopologyCanvas />
         <NodeDetailPanel v-if="topology.selectedNodeId !== null" />
         <EdgeDetailPanel v-if="topology.selectedEdgeId !== null" />

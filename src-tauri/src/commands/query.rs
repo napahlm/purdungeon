@@ -1,5 +1,5 @@
 use coil_core::types::{
-    Connection, Host, HostDetail, ModbusConversation, ModbusHostActivity, Packet,
+    Connection, Finding, Host, HostDetail, ModbusConversation, ModbusHostActivity, Packet,
 };
 use coil_core::{CoreError, Session};
 use tauri::State;
@@ -42,6 +42,12 @@ pub fn get_host_detail(
     state: State<'_, AppState>,
 ) -> Result<HostDetail, CoreError> {
     state.with_session(|s| s.host_detail(host_id))
+}
+
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub fn get_findings(state: State<'_, AppState>) -> Result<Vec<Finding>, CoreError> {
+    state.with_session(Session::findings)
 }
 
 #[allow(clippy::needless_pass_by_value)]

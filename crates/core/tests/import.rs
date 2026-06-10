@@ -122,7 +122,7 @@ fn import_discovers_roles_and_modbus_activity() {
 
     // All import stages fired, in order
     let stages = stages.lock().unwrap();
-    assert_eq!(stages.len(), 4);
+    assert_eq!(stages.len(), 5);
 
     let hosts = session.hosts().unwrap();
     let scada = hosts.iter().find(|h| h.ip_address == "192.168.10.100").unwrap();
@@ -142,4 +142,12 @@ fn import_discovers_roles_and_modbus_activity() {
         connections.iter().any(|c| c.app_protocol.as_deref() == Some("modbus")),
         "no modbus-tagged connections"
     );
+
+    // Findings: the coil writes and the cleartext note should both surface
+    let findings = session.findings().unwrap();
+    assert!(
+        findings.iter().any(|f| f.kind == "write" && f.host_ids.contains(&plc_a.id)),
+        "write finding missing: {findings:?}"
+    );
+    assert!(findings.iter().any(|f| f.kind == "cleartext"));
 }

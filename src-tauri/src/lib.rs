@@ -42,6 +42,7 @@ pub fn run() {
             commands::query::set_level_override,
             commands::query::get_modbus_host_activity,
             commands::query::get_modbus_conversation,
+            commands::query::get_findings,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run coil-sniffer");
