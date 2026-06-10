@@ -179,9 +179,18 @@ watch(
   },
 )
 
-watch(() => [topology.selectedNodeId, topology.selectedEdgeId], () => updateStyles())
-watch(() => topology.searchQuery, () => updateStyles())
-watch(() => topology.activeFindingId, () => updateStyles())
+watch(
+  () => [topology.selectedNodeId, topology.selectedEdgeId],
+  () => updateStyles(),
+)
+watch(
+  () => topology.searchQuery,
+  () => updateStyles(),
+)
+watch(
+  () => topology.activeFindingId,
+  () => updateStyles(),
+)
 
 // Click on empty canvas clears the selection
 watch(stage, (s) => {

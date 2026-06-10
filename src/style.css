@@ -59,8 +59,7 @@ body,
   overflow: hidden;
   background-color: var(--color-bg-primary);
   color: var(--color-text-primary);
-  font-family:
-    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
 }

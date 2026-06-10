@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed } from 'vue'
 import { useTimelineStore } from '@/stores/timeline'
 
 const timelineStore = useTimelineStore()
@@ -73,7 +73,7 @@ function resetFilter() {
       <!-- Active region -->
       <div
         class="absolute top-2.5 h-1 rounded bg-accent/60"
-        :style="{ left: startPct + '%', width: (endPct - startPct) + '%' }"
+        :style="{ left: startPct + '%', width: endPct - startPct + '%' }"
       />
 
       <!-- Start handle -->

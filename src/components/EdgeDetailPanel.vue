@@ -74,14 +74,21 @@ function openHost(hostId: number) {
         <span
           v-if="edge?.crossZone"
           class="rounded bg-alert/15 px-1.5 py-0.5 text-xs font-medium text-alert"
-        >cross-zone</span>
+          >cross-zone</span
+        >
       </div>
       <button
         class="rounded p-1 text-text-muted transition-colors hover:text-text-primary"
         aria-label="Close panel"
         @click="close"
       >
-        <svg viewBox="0 0 16 16" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.8">
+        <svg
+          viewBox="0 0 16 16"
+          class="h-3.5 w-3.5"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+        >
           <path d="M3 3l10 10M13 3L3 13" stroke-linecap="round" />
         </svg>
       </button>
@@ -99,7 +106,9 @@ function openHost(hostId: number) {
             <span class="flex-1 font-mono text-text-primary">{{ srcHost.ip_address }}</span>
             <span class="font-mono text-xs text-text-muted">:{{ connection.src_port }}</span>
           </button>
-          <div class="pl-2 text-xs text-text-muted">↓ {{ connection.app_protocol ?? connection.protocol.toLowerCase() }}</div>
+          <div class="pl-2 text-xs text-text-muted">
+            ↓ {{ connection.app_protocol ?? connection.protocol.toLowerCase() }}
+          </div>
           <button
             v-if="dstHost"
             class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-bg-elevated"
@@ -155,7 +164,9 @@ function openHost(hostId: number) {
           </div>
           <div v-if="modbus.poll_interval_ms !== null" class="flex justify-between">
             <span class="text-text-secondary">Polling cadence</span>
-            <span class="text-text-primary">every {{ formatCadence(modbus.poll_interval_ms) }}</span>
+            <span class="text-text-primary"
+              >every {{ formatCadence(modbus.poll_interval_ms) }}</span
+            >
           </div>
           <div v-if="modbus.unit_ids.length" class="flex justify-between">
             <span class="text-text-secondary">Unit IDs</span>
@@ -179,8 +190,11 @@ function openHost(hostId: number) {
                 <span
                   v-if="fn.is_write"
                   class="rounded bg-alert/15 px-1 py-px font-medium text-alert"
-                >W</span>
-                <span class="font-mono text-text-muted">{{ '0x' + fn.function_code.toString(16).padStart(2, '0') }}</span>
+                  >W</span
+                >
+                <span class="font-mono text-text-muted">{{
+                  '0x' + fn.function_code.toString(16).padStart(2, '0')
+                }}</span>
                 {{ fn.function_name }}
               </span>
               <span class="tabular-nums text-text-secondary">{{ fn.count.toLocaleString() }}</span>

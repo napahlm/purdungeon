@@ -11,9 +11,7 @@ const { loadFile } = useTauri()
 const hovering = ref(false)
 const progressPct = computed(() => Math.round(appStore.importProgress * 100))
 
-const currentStageIndex = computed(() =>
-  IMPORT_STAGES.findIndex((s) => s.id === appStore.stage),
-)
+const currentStageIndex = computed(() => IMPORT_STAGES.findIndex((s) => s.id === appStore.stage))
 
 function stageState(index: number): 'done' | 'active' | 'pending' {
   if (currentStageIndex.value < 0) return 'pending'
@@ -76,14 +74,18 @@ onUnmounted(() => {
             'text-text-secondary': stageState(i) === 'done',
           }"
         >
-          <span
-            class="flex h-4 w-4 items-center justify-center"
-            aria-hidden="true"
-          >
-            <svg v-if="stageState(i) === 'done'" viewBox="0 0 16 16" class="h-3.5 w-3.5 text-accent">
+          <span class="flex h-4 w-4 items-center justify-center" aria-hidden="true">
+            <svg
+              v-if="stageState(i) === 'done'"
+              viewBox="0 0 16 16"
+              class="h-3.5 w-3.5 text-accent"
+            >
               <path
-                fill="none" stroke="currentColor" stroke-width="2"
-                stroke-linecap="round" stroke-linejoin="round"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
                 d="M3 8.5 6.5 12 13 4.5"
               />
             </svg>
@@ -97,7 +99,8 @@ onUnmounted(() => {
           <span
             v-if="s.id === 'reading-packets' && stageState(i) === 'active'"
             class="text-xs tabular-nums text-text-muted"
-          >{{ progressPct }}%</span>
+            >{{ progressPct }}%</span
+          >
         </li>
       </ol>
 
@@ -118,9 +121,7 @@ onUnmounted(() => {
     <div v-else class="flex flex-col items-center gap-8">
       <div class="flex flex-col items-center gap-2 text-center">
         <h1 class="text-2xl font-semibold tracking-tight text-text-primary">coil-sniffer</h1>
-        <p class="text-sm text-text-secondary">
-          See the OT network inside a packet capture.
-        </p>
+        <p class="text-sm text-text-secondary">See the OT network inside a packet capture.</p>
       </div>
 
       <div

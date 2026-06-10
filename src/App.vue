@@ -11,6 +11,7 @@ import EdgeDetailPanel from '@/components/EdgeDetailPanel.vue'
 import SearchBar from '@/components/SearchBar.vue'
 import FilterBar from '@/components/FilterBar.vue'
 import FindingsPanel from '@/components/FindingsPanel.vue'
+import LevelLegend from '@/components/LevelLegend.vue'
 
 const appStore = useAppStore()
 const topology = useTopologyStore()
@@ -34,8 +35,16 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
         <TopologyCanvas />
         <NodeDetailPanel v-if="topology.selectedNodeId !== null" />
         <EdgeDetailPanel v-if="topology.selectedEdgeId !== null" />
-        <div class="absolute bottom-3 left-3 z-10">
+        <div class="absolute bottom-3 left-83 z-10">
           <FilterBar />
+        </div>
+        <div
+          class="absolute right-3 top-3 z-10"
+          :class="{
+            'right-89': topology.selectedNodeId !== null || topology.selectedEdgeId !== null,
+          }"
+        >
+          <LevelLegend />
         </div>
       </div>
       <TimelineBar />

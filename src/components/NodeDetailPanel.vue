@@ -103,7 +103,13 @@ function close() {
         aria-label="Close panel"
         @click="close"
       >
-        <svg viewBox="0 0 16 16" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.8">
+        <svg
+          viewBox="0 0 16 16"
+          class="h-3.5 w-3.5"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+        >
           <path d="M3 3l10 10M13 3L3 13" stroke-linecap="round" />
         </svg>
       </button>
@@ -131,7 +137,9 @@ function close() {
                 Auto — {{ ROLE_LABELS[host.role] }}
                 {{ host.role !== 'unknown' ? `(${Math.round(host.role_confidence * 100)}%)` : '' }}
               </option>
-              <option v-for="r in ASSIGNABLE_ROLES" :key="r" :value="r">{{ ROLE_LABELS[r] }}</option>
+              <option v-for="r in ASSIGNABLE_ROLES" :key="r" :value="r">
+                {{ ROLE_LABELS[r] }}
+              </option>
             </select>
           </div>
           <div class="flex items-center justify-between gap-2">
@@ -155,7 +163,9 @@ function close() {
 
       <!-- Identity -->
       <div class="border-b border-border px-4 py-3">
-        <div class="mb-2 text-xs font-medium uppercase tracking-wider text-text-muted">Identity</div>
+        <div class="mb-2 text-xs font-medium uppercase tracking-wider text-text-muted">
+          Identity
+        </div>
         <div class="space-y-1.5 text-sm">
           <div class="flex justify-between">
             <span class="text-text-secondary">MAC</span>
@@ -202,9 +212,14 @@ function close() {
           <span class="text-warn">{{ modbus.exceptions_returned }}</span>
         </div>
 
-        <template v-for="(stats, kind) in { 'Receives': modbus.as_server, 'Sends': modbus.as_client }" :key="kind">
+        <template
+          v-for="(stats, kind) in { Receives: modbus.as_server, Sends: modbus.as_client }"
+          :key="kind"
+        >
           <div v-if="stats.length" class="mt-2">
-            <div class="mb-1 text-xs text-text-muted">{{ kind }}</div>
+            <div class="mb-1 text-xs text-text-muted">
+              {{ kind }}
+            </div>
             <div class="space-y-0.5">
               <div
                 v-for="fn in stats"
@@ -215,10 +230,13 @@ function close() {
                   <span
                     v-if="fn.is_write"
                     class="rounded bg-alert/15 px-1 py-px font-medium text-alert"
-                  >W</span>
+                    >W</span
+                  >
                   {{ fn.function_name }}
                 </span>
-                <span class="tabular-nums text-text-secondary">{{ fn.count.toLocaleString() }}</span>
+                <span class="tabular-nums text-text-secondary">{{
+                  fn.count.toLocaleString()
+                }}</span>
               </div>
             </div>
           </div>
@@ -232,7 +250,9 @@ function close() {
           :key="title"
         >
           <div v-if="regs.length" class="mt-3">
-            <div class="mb-1 text-xs text-text-muted">{{ title }}</div>
+            <div class="mb-1 text-xs text-text-muted">
+              {{ title }}
+            </div>
             <table class="w-full text-xs">
               <thead>
                 <tr class="text-left text-text-muted">
@@ -244,11 +264,15 @@ function close() {
               </thead>
               <tbody>
                 <tr v-for="(r, i) in regs.slice(0, 12)" :key="i" class="border-t border-border/40">
-                  <td class="py-0.5 text-text-secondary">{{ r.kind }}</td>
+                  <td class="py-0.5 text-text-secondary">
+                    {{ r.kind }}
+                  </td>
                   <td class="py-0.5 font-mono text-text-primary">
                     {{ registerRange(r.start, r.quantity) }}
                   </td>
-                  <td class="py-0.5 text-right tabular-nums text-text-secondary">{{ r.reads }}</td>
+                  <td class="py-0.5 text-right tabular-nums text-text-secondary">
+                    {{ r.reads }}
+                  </td>
                   <td
                     class="py-0.5 text-right tabular-nums"
                     :class="r.writes > 0 ? 'font-medium text-alert' : 'text-text-secondary'"
@@ -277,10 +301,16 @@ function close() {
             class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-bg-elevated"
             @click="openEdge(conn.connection_id)"
           >
-            <span class="w-7 text-xs text-text-muted">{{ conn.direction === 'outbound' ? '→' : '←' }}</span>
+            <span class="w-7 text-xs text-text-muted">{{
+              conn.direction === 'outbound' ? '→' : '←'
+            }}</span>
             <span class="flex-1 truncate font-mono text-text-primary">{{ conn.peer_ip }}</span>
-            <span class="text-xs text-text-muted">{{ conn.app_protocol ?? conn.protocol.toLowerCase() }}</span>
-            <span class="text-xs tabular-nums text-text-secondary">{{ conn.packet_count.toLocaleString() }}</span>
+            <span class="text-xs text-text-muted">{{
+              conn.app_protocol ?? conn.protocol.toLowerCase()
+            }}</span>
+            <span class="text-xs tabular-nums text-text-secondary">{{
+              conn.packet_count.toLocaleString()
+            }}</span>
           </button>
         </div>
       </div>

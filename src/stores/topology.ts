@@ -42,6 +42,12 @@ function pairKey(a: number, b: number): string {
   return a < b ? `${a}-${b}` : `${b}-${a}`
 }
 
+function addAdjacency(adjacency: Map<number, number[]>, a: number, b: number): void {
+  const list = adjacency.get(a)
+  if (list) list.push(b)
+  else adjacency.set(a, [b])
+}
+
 function assignCurveOffsets(edgeList: CanvasEdge[]): void {
   const groups = new Map<string, CanvasEdge[]>()
   for (const e of edgeList) {
@@ -67,10 +73,7 @@ function assignCurveOffsets(edgeList: CanvasEdge[]): void {
  * barycenter sweeps pull connected nodes toward their peers in other
  * bands, then nodes are spaced evenly — deterministic and overlap-free.
  */
-function layoutBands(
-  nodes: CanvasNode[],
-  adjacency: Map<number, number[]>,
-): BandLayout[] {
+function layoutBands(nodes: CanvasNode[], adjacency: Map<number, number[]>): BandLayout[] {
   const byBand = new Map<string, CanvasNode[]>()
   for (const node of nodes) {
     let arr = byBand.get(node.bandKey)
@@ -112,7 +115,10 @@ function layoutBands(
           .map((id) => nodeById.get(id))
           .filter((n): n is CanvasNode => !!n && n.bandKey !== node.bandKey)
           .map((n) => n.x)
-        desired.set(node.host.id, xs.length > 0 ? xs.reduce((a, b) => a + b, 0) / xs.length : node.x)
+        desired.set(
+          node.host.id,
+          xs.length > 0 ? xs.reduce((a, b) => a + b, 0) / xs.length : node.x,
+        )
       }
       band.sort((a, b) => desired.get(a.host.id)! - desired.get(b.host.id)!)
       respace(band, layout)
@@ -177,8 +183,7 @@ export const useTopologyStore = defineStore('topology', () => {
     let result = edges.value
     if (hiddenBands.value.size > 0) {
       result = result.filter(
-        (e) =>
-          !hiddenBands.value.has(e.source.bandKey) && !hiddenBands.value.has(e.target.bandKey),
+        (e) => !hiddenBands.value.has(e.source.bandKey) && !hiddenBands.value.has(e.target.bandKey),
       )
     }
     if (hiddenFamilies.value.size > 0) {
@@ -274,10 +279,8 @@ export const useTopologyStore = defineStore('topology', () => {
         crossZone,
         curveOffset: 0,
       })
-      adjacency.get(conn.src_host_id)?.push(conn.dst_host_id) ??
-        adjacency.set(conn.src_host_id, [conn.dst_host_id])
-      adjacency.get(conn.dst_host_id)?.push(conn.src_host_id) ??
-        adjacency.set(conn.dst_host_id, [conn.src_host_id])
+      addAdjacency(adjacency, conn.src_host_id, conn.dst_host_id)
+      addAdjacency(adjacency, conn.dst_host_id, conn.src_host_id)
     }
 
     assignCurveOffsets(builtEdges)
@@ -299,10 +302,8 @@ export const useTopologyStore = defineStore('topology', () => {
       // Band changed: relayout everything so the node moves to its level
       const adjacency = new Map<number, number[]>()
       for (const e of edges.value) {
-        adjacency.get(e.source.host.id)?.push(e.target.host.id) ??
-          adjacency.set(e.source.host.id, [e.target.host.id])
-        adjacency.get(e.target.host.id)?.push(e.source.host.id) ??
-          adjacency.set(e.target.host.id, [e.source.host.id])
+        addAdjacency(adjacency, e.source.host.id, e.target.host.id)
+        addAdjacency(adjacency, e.target.host.id, e.source.host.id)
       }
       node.bandKey = newBand
       bands.value = layoutBands(nodes.value, adjacency)

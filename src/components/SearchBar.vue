@@ -61,7 +61,10 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown, true))
           v-if="query && topology.matchedNodeIds.size > 0"
           class="border-t border-border px-4 py-2 text-xs text-text-secondary"
         >
-          {{ topology.matchedNodeIds.size }} match{{ topology.matchedNodeIds.size === 1 ? '' : 'es' }} highlighted
+          {{ topology.matchedNodeIds.size }} match{{
+            topology.matchedNodeIds.size === 1 ? '' : 'es'
+          }}
+          highlighted
         </div>
         <div
           v-else-if="query && topology.matchedNodeIds.size === 0"

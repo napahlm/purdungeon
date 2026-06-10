@@ -38,11 +38,7 @@ const summary = computed(() =>
         v-for="finding in topology.findings"
         :key="finding.id"
         class="block w-full border-b border-border/50 px-4 py-3 text-left transition-colors"
-        :class="
-          topology.activeFindingId === finding.id
-            ? 'bg-bg-elevated'
-            : 'hover:bg-bg-surface'
-        "
+        :class="topology.activeFindingId === finding.id ? 'bg-bg-elevated' : 'hover:bg-bg-surface'"
         @click="topology.toggleFinding(finding)"
       >
         <div class="flex items-start gap-2.5">
@@ -51,7 +47,9 @@ const summary = computed(() =>
             :class="SEVERITY_COLOR[finding.severity]"
           />
           <div class="min-w-0">
-            <div class="text-sm leading-snug text-text-primary">{{ finding.title }}</div>
+            <div class="text-sm leading-snug text-text-primary">
+              {{ finding.title }}
+            </div>
             <div class="mt-1 text-xs leading-relaxed text-text-secondary">
               {{ finding.detail }}
             </div>

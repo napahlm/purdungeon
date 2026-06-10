@@ -28,7 +28,16 @@ export const SELECTION = '#e7eaef'
 export type ProtoFamily = 'modbus' | 'ot' | 'it' | 'other'
 
 const OT_PROTOCOLS = new Set([
-  's7comm', 'iec104', 'opcua', 'dnp3', 'enip', 'enip-io', 'bacnet', 'fins', 'fox', 'ff-annunc',
+  's7comm',
+  'iec104',
+  'opcua',
+  'dnp3',
+  'enip',
+  'enip-io',
+  'bacnet',
+  'fins',
+  'fox',
+  'ff-annunc',
 ])
 
 export function protoFamily(appProtocol: string | null): ProtoFamily {

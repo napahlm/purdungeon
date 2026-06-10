@@ -18,13 +18,13 @@ function fileName(path: string): string {
 async function openFile() {
   const selected = await open({
     multiple: false,
-    filters: [{ name: 'PCAP files', extensions: ['pcap', 'pcapng', 'cap'] }],
+    filters: [{ name: 'Packet captures', extensions: ['pcap', 'pcapng', 'cap'] }],
   })
   if (!selected) return
   await loadFile(selected)
 }
 
-function closeInvestigation() {
+function closeCapture() {
   topologyStore.reset()
   timelineStore.reset()
   appStore.reset()
@@ -32,31 +32,33 @@ function closeInvestigation() {
 </script>
 
 <template>
-  <header class="flex h-10 shrink-0 items-center justify-between border-b border-border bg-bg-secondary px-4">
-    <div class="flex items-center gap-4">
-      <span class="text-sm font-bold tracking-wider text-accent">coil-sniffer</span>
-      <div class="flex items-center gap-1">
-        <button
-          class="rounded px-2 py-0.5 text-xs text-text-secondary transition-colors hover:bg-bg-elevated hover:text-text-primary"
-          @click="openFile"
-        >
-          Open File
-        </button>
-        <button
-          class="rounded px-2 py-0.5 text-xs text-text-secondary transition-colors hover:bg-bg-elevated hover:text-text-primary"
-          @click="closeInvestigation"
-        >
-          Close
-        </button>
-      </div>
-    </div>
-    <div class="flex items-center gap-3">
-      <span v-if="appStore.loading" class="text-xs text-accent-dim">
-        importing... {{ Math.round(appStore.importProgress * 100) }}%
-      </span>
-      <span v-if="appStore.loadedFile" class="text-xs text-text-secondary">
+  <header
+    class="flex h-11 shrink-0 items-center justify-between border-b border-border bg-bg-secondary px-4"
+  >
+    <div class="flex items-baseline gap-4">
+      <span class="text-sm font-semibold tracking-tight text-text-primary">coil-sniffer</span>
+      <span v-if="appStore.loadedFile" class="text-xs text-text-muted">
         {{ fileName(appStore.loadedFile) }}
+        <span class="mx-1.5 text-border-strong">·</span>
+        {{ topologyStore.nodes.length }} assets
+        <span class="mx-1.5 text-border-strong">·</span>
+        {{ topologyStore.edges.length }} conversations
       </span>
+    </div>
+    <div class="flex items-center gap-1">
+      <span class="mr-2 hidden text-xs text-text-muted sm:inline">⌘K to search</span>
+      <button
+        class="rounded-md px-2.5 py-1 text-xs text-text-secondary transition-colors hover:bg-bg-elevated hover:text-text-primary"
+        @click="openFile"
+      >
+        Open…
+      </button>
+      <button
+        class="rounded-md px-2.5 py-1 text-xs text-text-secondary transition-colors hover:bg-bg-elevated hover:text-text-primary"
+        @click="closeCapture"
+      >
+        Close
+      </button>
     </div>
   </header>
 </template>
