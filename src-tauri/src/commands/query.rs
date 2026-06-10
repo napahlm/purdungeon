@@ -1,4 +1,6 @@
-use coil_core::types::{Connection, Host, HostDetail, Packet};
+use coil_core::types::{
+    Connection, Host, HostDetail, ModbusConversation, ModbusHostActivity, Packet,
+};
 use coil_core::{CoreError, Session};
 use tauri::State;
 
@@ -40,6 +42,24 @@ pub fn get_host_detail(
     state: State<'_, AppState>,
 ) -> Result<HostDetail, CoreError> {
     state.with_session(|s| s.host_detail(host_id))
+}
+
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub fn get_modbus_host_activity(
+    host_id: i64,
+    state: State<'_, AppState>,
+) -> Result<ModbusHostActivity, CoreError> {
+    state.with_session(|s| s.modbus_host_activity(host_id))
+}
+
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub fn get_modbus_conversation(
+    connection_id: i64,
+    state: State<'_, AppState>,
+) -> Result<ModbusConversation, CoreError> {
+    state.with_session(|s| s.modbus_conversation(connection_id))
 }
 
 #[allow(clippy::needless_pass_by_value)]

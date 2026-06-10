@@ -78,6 +78,48 @@ pub struct HostConnection {
 }
 
 #[derive(Debug, Serialize)]
+pub struct ModbusFunctionStat {
+    pub function_code: i64,
+    pub function_name: String,
+    pub count: i64,
+    pub is_write: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RegisterAccess {
+    pub kind: String,
+    pub start: i64,
+    pub quantity: i64,
+    pub reads: i64,
+    pub writes: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ModbusHostActivity {
+    /// Requests this host sends to other devices
+    pub as_client: Vec<ModbusFunctionStat>,
+    /// Requests other devices send to this host
+    pub as_server: Vec<ModbusFunctionStat>,
+    pub unit_ids_served: Vec<i64>,
+    /// Data points on this device touched by its clients
+    pub registers: Vec<RegisterAccess>,
+    /// Data points this host touches on other devices
+    pub registers_remote: Vec<RegisterAccess>,
+    pub exceptions_returned: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ModbusConversation {
+    pub functions: Vec<ModbusFunctionStat>,
+    pub unit_ids: Vec<i64>,
+    pub requests: i64,
+    pub reads: i64,
+    pub writes: i64,
+    pub exceptions: i64,
+    pub poll_interval_ms: Option<f64>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct Packet {
     pub id: i64,
     pub timestamp: f64,

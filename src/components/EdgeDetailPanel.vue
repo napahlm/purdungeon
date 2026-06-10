@@ -2,39 +2,32 @@
 import { ref, watch, computed } from 'vue'
 import { useTopologyStore } from '@/stores/topology'
 import { useTauri } from '@/composables/useTauri'
-import type { Packet } from '@/types/network'
+import type { ModbusConversation } from '@/types/network'
 
 const topology = useTopologyStore()
-const { getConnectionPackets } = useTauri()
+const { getModbusConversation } = useTauri()
 
-const packets = ref<Packet[]>([])
+const modbus = ref<ModbusConversation | null>(null)
 const loading = ref(false)
 
-const connection = computed(() => {
+const edge = computed(() => {
   if (topology.selectedEdgeId === null) return null
-  return topology.edges.find((e) => e.connection.id === topology.selectedEdgeId)?.connection ?? null
+  return topology.edges.find((e) => e.connection.id === topology.selectedEdgeId) ?? null
 })
 
-const srcHost = computed(() => {
-  if (!connection.value) return null
-  return topology.nodes.find((n) => n.host.id === connection.value!.src_host_id)?.host ?? null
-})
-
-const dstHost = computed(() => {
-  if (!connection.value) return null
-  return topology.nodes.find((n) => n.host.id === connection.value!.dst_host_id)?.host ?? null
-})
+const connection = computed(() => edge.value?.connection ?? null)
+const srcHost = computed(() => edge.value?.source.host ?? null)
+const dstHost = computed(() => edge.value?.target.host ?? null)
 
 watch(
   () => topology.selectedEdgeId,
   async (edgeId) => {
-    if (edgeId === null) {
-      packets.value = []
-      return
-    }
+    modbus.value = null
+    if (edgeId === null) return
+    if (connection.value?.app_protocol !== 'modbus') return
     loading.value = true
     try {
-      packets.value = await getConnectionPackets(edgeId, 100)
+      modbus.value = await getModbusConversation(edgeId)
     } finally {
       loading.value = false
     }
@@ -53,10 +46,9 @@ function formatTime(ts: number): string {
   return new Date(ts * 1000).toLocaleString()
 }
 
-function formatPacketTime(ts: number): string {
-  if (ts <= 0) return '—'
-  const d = new Date(ts * 1000)
-  return d.toLocaleTimeString(undefined, { hour12: false, fractionalSecondDigits: 3 })
+function formatCadence(ms: number): string {
+  if (ms < 1000) return `${ms.toFixed(0)} ms`
+  return `${(ms / 1000).toFixed(1)} s`
 }
 
 function close() {
@@ -69,63 +61,60 @@ function openHost(hostId: number) {
 </script>
 
 <template>
-  <div
-    class="flex h-full w-80 flex-col border-l border-border bg-bg-secondary"
-    @keydown.escape="close"
-  >
+  <div class="flex h-full w-86 flex-col border-l border-border bg-bg-secondary">
     <!-- Header -->
     <div class="flex items-center justify-between border-b border-border px-4 py-3">
-      <h2 class="text-sm font-semibold text-text-primary">Connection Detail</h2>
+      <div class="flex items-center gap-2.5">
+        <span
+          v-if="edge"
+          class="inline-block h-2.5 w-2.5 rounded-full"
+          :style="{ backgroundColor: edge.color }"
+        />
+        <h2 class="text-sm font-semibold text-text-primary">Conversation</h2>
+        <span
+          v-if="edge?.crossZone"
+          class="rounded bg-alert/15 px-1.5 py-0.5 text-xs font-medium text-alert"
+        >cross-zone</span>
+      </div>
       <button
-        class="text-text-secondary hover:text-text-primary"
+        class="rounded p-1 text-text-muted transition-colors hover:text-text-primary"
+        aria-label="Close panel"
         @click="close"
       >
-        ✕
+        <svg viewBox="0 0 16 16" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.8">
+          <path d="M3 3l10 10M13 3L3 13" stroke-linecap="round" />
+        </svg>
       </button>
     </div>
 
-    <div v-if="loading" class="flex flex-1 items-center justify-center text-text-muted">
-      Loading…
-    </div>
-
-    <div v-else-if="connection" class="flex-1 overflow-y-auto">
+    <div v-if="connection" class="flex-1 overflow-y-auto">
       <!-- Endpoints -->
       <div class="border-b border-border px-4 py-3">
-        <div class="mb-2 text-xs font-medium uppercase tracking-wider text-text-muted">Endpoints</div>
-        <div class="space-y-2 text-sm">
+        <div class="space-y-1 text-sm">
           <button
             v-if="srcHost"
-            class="flex w-full items-center gap-2 rounded px-2 py-1 text-left hover:bg-bg-elevated"
+            class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-bg-elevated"
             @click="openHost(srcHost.id)"
           >
-            <span class="text-xs text-text-muted">SRC</span>
             <span class="flex-1 font-mono text-text-primary">{{ srcHost.ip_address }}</span>
-            <span class="text-xs text-text-secondary">:{{ connection.src_port }}</span>
+            <span class="font-mono text-xs text-text-muted">:{{ connection.src_port }}</span>
           </button>
+          <div class="pl-2 text-xs text-text-muted">↓ {{ connection.app_protocol ?? connection.protocol.toLowerCase() }}</div>
           <button
             v-if="dstHost"
-            class="flex w-full items-center gap-2 rounded px-2 py-1 text-left hover:bg-bg-elevated"
+            class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-bg-elevated"
             @click="openHost(dstHost.id)"
           >
-            <span class="text-xs text-text-muted">DST</span>
             <span class="flex-1 font-mono text-text-primary">{{ dstHost.ip_address }}</span>
-            <span class="text-xs text-text-secondary">:{{ connection.dst_port }}</span>
+            <span class="font-mono text-xs text-text-muted">:{{ connection.dst_port }}</span>
           </button>
         </div>
       </div>
 
-      <!-- Connection info -->
+      <!-- Traffic -->
       <div class="border-b border-border px-4 py-3">
-        <div class="mb-2 text-xs font-medium uppercase tracking-wider text-text-muted">Details</div>
+        <div class="mb-2 text-xs font-medium uppercase tracking-wider text-text-muted">Traffic</div>
         <div class="space-y-1.5 text-sm">
-          <div class="flex justify-between">
-            <span class="text-text-secondary">Protocol</span>
-            <span class="text-text-primary">{{ connection.protocol }}</span>
-          </div>
-          <div v-if="connection.app_protocol" class="flex justify-between">
-            <span class="text-text-secondary">App Protocol</span>
-            <span class="font-medium text-accent">{{ connection.app_protocol }}</span>
-          </div>
           <div class="flex justify-between">
             <span class="text-text-secondary">Packets</span>
             <span class="text-text-primary">{{ connection.packet_count.toLocaleString() }}</span>
@@ -145,34 +134,58 @@ function openHost(hostId: number) {
         </div>
       </div>
 
-      <!-- Packets table -->
-      <div class="px-4 py-3">
-        <div class="mb-2 text-xs font-medium uppercase tracking-wider text-text-muted">
-          Packets ({{ packets.length }}{{ packets.length >= 100 ? '+' : '' }})
+      <!-- Modbus -->
+      <div v-if="loading" class="px-4 py-3 text-sm text-text-muted">Loading Modbus detail…</div>
+      <div v-else-if="modbus" class="px-4 py-3">
+        <div class="mb-2 text-xs font-medium uppercase tracking-wider text-text-muted">Modbus</div>
+
+        <div class="space-y-1.5 text-sm">
+          <div class="flex justify-between">
+            <span class="text-text-secondary">Requests</span>
+            <span class="text-text-primary">{{ modbus.requests.toLocaleString() }}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-text-secondary">Reads / writes</span>
+            <span class="text-text-primary">
+              {{ modbus.reads.toLocaleString() }} /
+              <span :class="modbus.writes > 0 ? 'font-medium text-alert' : ''">
+                {{ modbus.writes.toLocaleString() }}
+              </span>
+            </span>
+          </div>
+          <div v-if="modbus.poll_interval_ms !== null" class="flex justify-between">
+            <span class="text-text-secondary">Polling cadence</span>
+            <span class="text-text-primary">every {{ formatCadence(modbus.poll_interval_ms) }}</span>
+          </div>
+          <div v-if="modbus.unit_ids.length" class="flex justify-between">
+            <span class="text-text-secondary">Unit IDs</span>
+            <span class="font-mono text-text-primary">{{ modbus.unit_ids.join(', ') }}</span>
+          </div>
+          <div v-if="modbus.exceptions > 0" class="flex justify-between">
+            <span class="text-text-secondary">Exceptions</span>
+            <span class="text-warn">{{ modbus.exceptions }}</span>
+          </div>
         </div>
-        <div class="overflow-x-auto">
-          <table class="w-full text-xs">
-            <thead>
-              <tr class="border-b border-border text-left text-text-muted">
-                <th class="pb-1 pr-2">Time</th>
-                <th class="pb-1 pr-2">Src</th>
-                <th class="pb-1 pr-2">Dst</th>
-                <th class="pb-1 text-right">Len</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="pkt in packets"
-                :key="pkt.id"
-                class="border-b border-border/30"
-              >
-                <td class="py-0.5 pr-2 font-mono text-text-secondary">{{ formatPacketTime(pkt.timestamp) }}</td>
-                <td class="py-0.5 pr-2 font-mono text-text-primary">{{ pkt.src_port }}</td>
-                <td class="py-0.5 pr-2 font-mono text-text-primary">{{ pkt.dst_port }}</td>
-                <td class="py-0.5 text-right font-mono text-text-secondary">{{ pkt.length }}</td>
-              </tr>
-            </tbody>
-          </table>
+
+        <div v-if="modbus.functions.length" class="mt-3">
+          <div class="mb-1 text-xs text-text-muted">Function codes</div>
+          <div class="space-y-0.5">
+            <div
+              v-for="fn in modbus.functions"
+              :key="fn.function_code"
+              class="flex items-center justify-between text-xs"
+            >
+              <span class="flex items-center gap-1.5 text-text-primary">
+                <span
+                  v-if="fn.is_write"
+                  class="rounded bg-alert/15 px-1 py-px font-medium text-alert"
+                >W</span>
+                <span class="font-mono text-text-muted">{{ '0x' + fn.function_code.toString(16).padStart(2, '0') }}</span>
+                {{ fn.function_name }}
+              </span>
+              <span class="tabular-nums text-text-secondary">{{ fn.count.toLocaleString() }}</span>
+            </div>
+          </div>
         </div>
       </div>
     </div>

@@ -1,6 +1,15 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import type { Host, Connection, ImportResult, HostDetail, Packet } from '@/types/network'
+import type {
+  Host,
+  Connection,
+  ImportResult,
+  HostDetail,
+  Packet,
+  ModbusHostActivity,
+  ModbusConversation,
+  Role,
+} from '@/types/network'
 import { useAppStore, type ImportStage } from '@/stores/app'
 import { useTopologyStore } from '@/stores/topology'
 import { useTimelineStore } from '@/stores/timeline'
@@ -51,6 +60,22 @@ export function useTauri() {
 
   async function getConnectionPackets(connectionId: number, limit: number): Promise<Packet[]> {
     return invoke<Packet[]>('get_connection_packets', { connectionId, limit })
+  }
+
+  async function getModbusHostActivity(hostId: number): Promise<ModbusHostActivity> {
+    return invoke<ModbusHostActivity>('get_modbus_host_activity', { hostId })
+  }
+
+  async function getModbusConversation(connectionId: number): Promise<ModbusConversation> {
+    return invoke<ModbusConversation>('get_modbus_conversation', { connectionId })
+  }
+
+  async function setRoleOverride(hostId: number, role: Role | null): Promise<void> {
+    return invoke<void>('set_role_override', { hostId, role })
+  }
+
+  async function setLevelOverride(hostId: number, level: number | null): Promise<void> {
+    return invoke<void>('set_level_override', { hostId, level })
   }
 
   async function loadFile(path: string) {
@@ -109,6 +134,10 @@ export function useTauri() {
     saveNodePosition,
     getHostDetail,
     getConnectionPackets,
+    getModbusHostActivity,
+    getModbusConversation,
+    setRoleOverride,
+    setLevelOverride,
     loadFile,
   }
 }

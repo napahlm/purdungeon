@@ -14,7 +14,10 @@ use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 
 pub use error::CoreError;
-use types::{Connection, Host, HostDetail, ImportResult, ImportStage, Packet};
+use types::{
+    Connection, Host, HostDetail, ImportResult, ImportStage, ModbusConversation,
+    ModbusHostActivity, Packet,
+};
 
 /// One imported capture: a temp `SQLite` database plus query access.
 /// Dropping the session removes the temp files.
@@ -80,6 +83,14 @@ impl Session {
 
     pub fn save_node_position(&self, host_id: i64, x: f64, y: f64) -> Result<(), CoreError> {
         self.with_conn(|c| store::queries::save_node_position(c, host_id, x, y))
+    }
+
+    pub fn modbus_host_activity(&self, host_id: i64) -> Result<ModbusHostActivity, CoreError> {
+        self.with_conn(|c| store::modbus::host_activity(c, host_id))
+    }
+
+    pub fn modbus_conversation(&self, connection_id: i64) -> Result<ModbusConversation, CoreError> {
+        self.with_conn(|c| store::modbus::conversation(c, connection_id))
     }
 
     pub fn set_role_override(&self, host_id: i64, role: Option<&str>) -> Result<(), CoreError> {

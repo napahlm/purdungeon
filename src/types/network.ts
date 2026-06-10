@@ -31,6 +31,37 @@ export interface Host {
   last_seen: number
 }
 
+export const ROLE_LABELS: Record<Role, string> = {
+  plc: 'PLC',
+  scada: 'SCADA / Master',
+  hmi: 'HMI',
+  'engineering-workstation': 'Engineering Workstation',
+  historian: 'Historian',
+  'field-device': 'Field Device',
+  'network-gear': 'Network Gear',
+  server: 'Server',
+  workstation: 'Workstation',
+  external: 'External',
+  broadcast: 'Broadcast',
+  unknown: 'Unknown',
+  subnet: 'Subnet',
+}
+
+/** Roles a user can assign manually. */
+export const ASSIGNABLE_ROLES: Role[] = [
+  'plc',
+  'scada',
+  'hmi',
+  'engineering-workstation',
+  'historian',
+  'field-device',
+  'network-gear',
+  'server',
+  'workstation',
+  'external',
+  'unknown',
+]
+
 /** Role after any user override. */
 export function effectiveRole(host: Host): Role {
   return host.role_override ?? host.role
@@ -86,6 +117,40 @@ export interface Packet {
   dst_port: number
   protocol: string
   length: number
+}
+
+export interface ModbusFunctionStat {
+  function_code: number
+  function_name: string
+  count: number
+  is_write: boolean
+}
+
+export interface RegisterAccess {
+  kind: string
+  start: number
+  quantity: number
+  reads: number
+  writes: number
+}
+
+export interface ModbusHostActivity {
+  as_client: ModbusFunctionStat[]
+  as_server: ModbusFunctionStat[]
+  unit_ids_served: number[]
+  registers: RegisterAccess[]
+  registers_remote: RegisterAccess[]
+  exceptions_returned: number
+}
+
+export interface ModbusConversation {
+  functions: ModbusFunctionStat[]
+  unit_ids: number[]
+  requests: number
+  reads: number
+  writes: number
+  exceptions: number
+  poll_interval_ms: number | null
 }
 
 export interface ImportResult {
