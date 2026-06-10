@@ -1,34 +1,45 @@
 # coil-sniffer
 
-Offline desktop tool for OT/ICS network analysis. Drop a pcap file, get a network topology canvas and communication timeline. Think of it as a modern, open-source take on GrassMarlin.
+Offline desktop tool for OT/ICS network analysis. Drop a packet capture on the window and see the OT network inside it: every device, its likely role, where it sits in the Purdue model, who it talks to, and which of those conversations deserve a closer look. Think of it as a modern, open-source take on GrassMarlin.
 
 ## What it does
 
-1. Load a .pcap or .pcapng capture file (drag-drop or file picker)
-2. Rust backend parses the capture and extracts L2/L3/L4 info, identifies OT protocols (Modbus TCP for now)
-3. Parsed data is stored in an embedded SQLite database (one db per pcap)
-4. Frontend renders two views:
-   - **Network topology canvas** -- interactive, draggable nodes, pan/zoom, force-directed layout
-   - **Timeline** -- scrub through time, filter the topology view by time window
+1. Drag a `.pcap` / `.pcapng` onto the window (or use the file picker). Parsing runs off the main thread with honest progress stages.
+2. The Rust core decodes L2–L4, parses Modbus TCP down to function codes, unit IDs, and coil/register accesses, and names other protocols by port.
+3. Discovery infers a role for every host — PLC, SCADA/master, HMI, engineering workstation, historian, network gear, … — each as a best guess with confidence and evidence, plus a Purdue level. Both are overridable in the UI.
+4. The network renders as a **Purdue-layered topology**: assets in horizontal bands by level (process at the bottom, enterprise at the top), node color = level, node shape = role, edge color = protocol, edge width = volume. Conversations that skip a level or cross the control/IT boundary are highlighted.
+5. A findings list surfaces what a consultant checks first: cross-zone conduits, who writes to controllers, external addresses on OT segments, scan-like behavior, cleartext control protocols. Each finding highlights the relevant nodes and edges on click.
+6. Click any node or edge for detail: identity, classification, per-register read/write activity, function code breakdown, polling cadence.
+
+Everything stays on your machine; nothing leaves the process. OUI vendor lookup uses a bundled table.
+
+## Architecture
+
+The analysis core is a headless Rust crate with no UI dependencies — the desktop app is a thin Tauri shell over it, so the core can be reused from a CLI or tested directly.
+
+```
+crates/core/           Headless analysis core (Rust)
+  src/ingest/          pcap/pcapng reading, L2-L4 decode
+  src/protocols/       OT protocol parsers (Modbus TCP)
+  src/analysis/        protocol naming, role + Purdue inference, findings
+  src/store/           per-session SQLite schema and queries
+  tests/               end-to-end import test against a built capture
+
+src-tauri/             Desktop shell (Tauri 2)
+  src/commands/        IPC commands wrapping the core
+
+src/                   Frontend (Vue 3 + TypeScript + Tailwind)
+  canvas/              Konva rendering: nodes, edges, palette
+  components/          panels, filters, loading, timeline
+  stores/              Pinia state + Purdue band layout
+```
 
 ## Prerequisites
-
-### All platforms
 
 - [Rust](https://rustup.rs/) (latest stable)
 - [Node.js](https://nodejs.org/) 20+ and [pnpm](https://pnpm.io/)
 
-### Windows
-
-- WebView2 (pre-installed on Windows 10/11)
-- Visual Studio Build Tools with C++ workload (for rusqlite bundled SQLite compilation)
-
-### Linux (Ubuntu/Debian)
-
-```
-sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
-  libssl-dev libayatana-appindicator3-dev librsvg2-dev
-```
+Platform notes: Windows needs WebView2 (pre-installed on 10/11) and VS Build Tools with the C++ workload; Linux needs `libwebkit2gtk-4.1-dev` and friends (see the Tauri docs).
 
 ## Getting started
 
@@ -37,42 +48,14 @@ pnpm install
 pnpm dev
 ```
 
-## Build
-
-```
-pnpm build
-```
-
-Produces platform-specific installers in `src-tauri/target/release/bundle/`.
-
-## Project structure
-
-```
-src/                   Frontend (Vue 3 + TypeScript + Tailwind)
-  components/
-    canvas/            Topology canvas (Konva.js)
-    timeline/          Timeline slider
-    common/            Shared UI components
-  stores/              Pinia state management
-  composables/         Shared logic
-  types/               TypeScript interfaces
-
-src-tauri/             Backend (Rust)
-  src/
-    commands/          Tauri IPC command handlers
-    parser/            Pcap file parsing
-    protocols/         OT protocol dissectors
-    db/                SQLite schema and queries
-```
-
 ## Commands
 
 | Command | What it does |
 |---------|-------------|
 | `pnpm dev` | Start dev mode (hot reload frontend + Rust backend) |
-| `pnpm build` | Build release binary |
-| `pnpm lint` | Run eslint on frontend |
-| `pnpm format` | Run prettier on frontend |
+| `pnpm build` | Build release binary and installers |
+| `pnpm lint` | Run eslint on the frontend |
+| `cargo test -p coil-core` | Test the analysis core headless |
 
 ## License
 
