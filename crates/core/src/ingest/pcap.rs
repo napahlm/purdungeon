@@ -31,7 +31,7 @@ pub fn parse_pcap(
     conn.execute_batch("BEGIN EXCLUSIVE")?;
 
     let mut host_map: HashMap<String, i64> = HashMap::new();
-    let mut conn_map: HashMap<String, i64> = HashMap::new();
+    let mut conn_map: HashMap<String, (i64, bool)> = HashMap::new();
     let mut packet_count: usize = 0;
     let mut min_ts: f64 = f64::MAX;
     let mut max_ts: f64 = f64::MIN;
@@ -84,7 +84,7 @@ fn parse_pcapng_data(
     data: &[u8],
     conn: &rusqlite::Connection,
     host_map: &mut HashMap<String, i64>,
-    conn_map: &mut HashMap<String, i64>,
+    conn_map: &mut HashMap<String, (i64, bool)>,
     packet_count: &mut usize,
     min_ts: &mut f64,
     max_ts: &mut f64,
@@ -143,7 +143,7 @@ fn parse_legacy_data(
     data: &[u8],
     conn: &rusqlite::Connection,
     host_map: &mut HashMap<String, i64>,
-    conn_map: &mut HashMap<String, i64>,
+    conn_map: &mut HashMap<String, (i64, bool)>,
     packet_count: &mut usize,
     min_ts: &mut f64,
     max_ts: &mut f64,
@@ -183,7 +183,7 @@ fn process_packet(
     timestamp: f64,
     conn: &rusqlite::Connection,
     host_map: &mut HashMap<String, i64>,
-    conn_map: &mut HashMap<String, i64>,
+    conn_map: &mut HashMap<String, (i64, bool)>,
     packet_count: &mut usize,
     min_ts: &mut f64,
     max_ts: &mut f64,
@@ -226,10 +226,15 @@ fn process_packet(
         _ => return Ok(()),
     };
 
-    let app_protocol = if protocol == "TCP" && modbus::is_modbus_tcp(src_port, dst_port, payload) {
-        Some("modbus".to_string())
+    let modbus_frames = if protocol == "TCP" && modbus::is_modbus_tcp(src_port, dst_port, payload) {
+        modbus::parse_frames(payload, dst_port == modbus::MODBUS_PORT)
     } else {
+        Vec::new()
+    };
+    let app_protocol = if modbus_frames.is_empty() {
         None
+    } else {
+        Some("modbus".to_string())
     };
 
     if timestamp > 0.0 {
@@ -247,8 +252,50 @@ fn process_packet(
 
     // Upsert connection — in-memory cache for the common case
     let flow_key = format!("{src_ip}:{src_port}-{dst_ip}:{dst_port}-{protocol}");
-    let protocol = protocol.to_string();
-    let conn_id = if let Some(&id) = conn_map.get(&flow_key) {
+    let conn_id = upsert_connection(
+        conn,
+        conn_map,
+        flow_key,
+        (src_host_id, dst_host_id, src_port, dst_port),
+        protocol,
+        app_protocol.as_deref(),
+        data.len() as i64,
+        timestamp,
+    )?;
+
+    insert_modbus_events(
+        conn,
+        conn_id,
+        src_host_id,
+        dst_host_id,
+        timestamp,
+        dst_port == modbus::MODBUS_PORT,
+        &modbus_frames,
+    )?;
+
+    // Insert packet using cached prepared statement
+    conn.prepare_cached(
+        "INSERT INTO packets (connection_id, timestamp, src_ip, dst_ip, src_port, dst_port, protocol, length)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+    )?
+    .execute(params![conn_id, timestamp, &src_ip, &dst_ip, src_port, dst_port, protocol, data.len() as i64])?;
+
+    *packet_count += 1;
+    Ok(())
+}
+
+fn upsert_connection(
+    conn: &rusqlite::Connection,
+    conn_map: &mut HashMap<String, (i64, bool)>,
+    flow_key: String,
+    (src_host_id, dst_host_id, src_port, dst_port): (i64, i64, u16, u16),
+    protocol: &str,
+    app_protocol: Option<&str>,
+    packet_len: i64,
+    timestamp: f64,
+) -> Result<i64, CoreError> {
+    if let Some(entry) = conn_map.get_mut(&flow_key) {
+        let (id, tagged) = *entry;
         conn.prepare_cached(
             "UPDATE connections SET
                 packet_count = packet_count + 1,
@@ -257,33 +304,66 @@ fn process_packet(
                 last_seen = MAX(last_seen, ?2)
              WHERE id = ?3",
         )?
-        .execute(params![data.len() as i64, timestamp, id])?;
-        id
-    } else {
+        .execute(params![packet_len, timestamp, id])?;
+        // A TCP flow opens with an empty SYN, so the app protocol is only
+        // recognizable once payload arrives — tag the flow late.
+        if !tagged && app_protocol.is_some() {
+            conn.prepare_cached("UPDATE connections SET app_protocol = ?1 WHERE id = ?2")?
+                .execute(params![app_protocol, id])?;
+            entry.1 = true;
+        }
+        return Ok(id);
+    }
+
+    conn.prepare_cached(
+        "INSERT INTO connections
+            (src_host_id, dst_host_id, src_port, dst_port, protocol, app_protocol,
+             packet_count, byte_count, first_seen, last_seen)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7, ?8, ?8)",
+    )?
+    .execute(params![
+        src_host_id, dst_host_id, src_port, dst_port,
+        protocol, app_protocol,
+        packet_len, timestamp,
+    ])?;
+    let id = conn.last_insert_rowid();
+    conn_map.insert(flow_key, (id, app_protocol.is_some()));
+    Ok(id)
+}
+
+fn insert_modbus_events(
+    conn: &rusqlite::Connection,
+    conn_id: i64,
+    src_host_id: i64,
+    dst_host_id: i64,
+    timestamp: f64,
+    is_request: bool,
+    frames: &[modbus::ModbusFrame],
+) -> Result<(), CoreError> {
+    for frame in frames {
         conn.prepare_cached(
-            "INSERT INTO connections
-                (src_host_id, dst_host_id, src_port, dst_port, protocol, app_protocol,
-                 packet_count, byte_count, first_seen, last_seen)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7, ?8, ?8)",
+            "INSERT INTO modbus_events
+                (connection_id, src_host_id, dst_host_id, timestamp, is_request,
+                 transaction_id, unit_id, function_code, is_exception, exception_code,
+                 start_address, quantity, is_write)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         )?
         .execute(params![
-            src_host_id, dst_host_id, src_port, dst_port,
-            &protocol, app_protocol.as_deref(),
-            data.len() as i64, timestamp,
+            conn_id,
+            src_host_id,
+            dst_host_id,
+            timestamp,
+            i64::from(is_request),
+            i64::from(frame.transaction_id),
+            i64::from(frame.unit_id),
+            i64::from(frame.function_code),
+            i64::from(frame.is_exception),
+            frame.exception_code.map(i64::from),
+            frame.start_address.map(i64::from),
+            frame.quantity.map(i64::from),
+            i64::from(frame.is_write),
         ])?;
-        let id = conn.last_insert_rowid();
-        conn_map.insert(flow_key, id);
-        id
-    };
-
-    // Insert packet using cached prepared statement
-    conn.prepare_cached(
-        "INSERT INTO packets (connection_id, timestamp, src_ip, dst_ip, src_port, dst_port, protocol, length)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-    )?
-    .execute(params![conn_id, timestamp, &src_ip, &dst_ip, src_port, dst_port, &protocol, data.len() as i64])?;
-
-    *packet_count += 1;
+    }
     Ok(())
 }
 
