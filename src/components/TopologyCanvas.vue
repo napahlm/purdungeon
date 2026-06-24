@@ -5,7 +5,12 @@ import { useCanvas } from '@/composables/useCanvas'
 import { useTopologyStore } from '@/stores/topology'
 import { useTauri } from '@/composables/useTauri'
 import { createNodeGroup, updateNodeGroup } from '@/canvas/CanvasNode'
-import { createEdgeLine, updateEdgeLine } from '@/canvas/CanvasEdge'
+import {
+  createLinkLine,
+  updateLinkLine,
+  createLinkBadge,
+  updateLinkBadge,
+} from '@/canvas/CanvasLink'
 import { TEXT_MUTED } from '@/canvas/palette'
 
 const containerRef = ref<HTMLDivElement | null>(null)
@@ -15,7 +20,8 @@ const topology = useTopologyStore()
 const { saveNodePosition } = useTauri()
 
 const nodeGroups = new Map<number, Konva.Group>()
-const edgeLines = new Map<number, Konva.Line>()
+const linkLines = new Map<string, Konva.Line>()
+const linkBadges = new Map<string, Konva.Label>()
 
 function contentBounds() {
   let minX = Infinity
@@ -80,26 +86,33 @@ function renderGraph() {
   if (!layer) return
 
   for (const g of nodeGroups.values()) g.destroy()
-  for (const l of edgeLines.values()) l.destroy()
+  for (const l of linkLines.values()) l.destroy()
+  for (const b of linkBadges.values()) b.destroy()
   nodeGroups.clear()
-  edgeLines.clear()
+  linkLines.clear()
+  linkBadges.clear()
 
-  // Edges first (below nodes)
-  for (const edge of topology.filteredEdges) {
-    const line = createEdgeLine(edge, {
-      onClick(connectionId) {
-        topology.selectEdge(connectionId === topology.selectedEdgeId ? null : connectionId)
+  // Links first (below nodes), then their count badges on top of the lines
+  for (const link of topology.links) {
+    const line = createLinkLine(link, {
+      onClick(key) {
+        topology.selectLink(key === topology.selectedLinkKey ? null : key)
       },
     })
     layer.add(line)
-    edgeLines.set(edge.connection.id, line)
+    linkLines.set(link.key, line)
+    if (link.conversationCount > 1) {
+      const badge = createLinkBadge(link)
+      layer.add(badge)
+      linkBadges.set(link.key, badge)
+    }
   }
 
   for (const node of topology.filteredNodes) {
     const group = createNodeGroup(node, {
       onDragMove(hostId, x, y) {
         topology.moveNode(hostId, x, y)
-        updateEdgesFor(hostId)
+        updateLinksFor(hostId)
       },
       onDragEnd(hostId, x, y) {
         saveNodePosition(hostId, x, y)
@@ -117,11 +130,13 @@ function renderGraph() {
   layer.batchDraw()
 }
 
-function updateEdgesFor(hostId: number) {
-  for (const edge of topology.filteredEdges) {
-    if (edge.source.host.id === hostId || edge.target.host.id === hostId) {
-      const line = edgeLines.get(edge.connection.id)
-      if (line) updateEdgeLine(line, edge, edge.connection.id === topology.selectedEdgeId)
+function updateLinksFor(hostId: number) {
+  for (const link of topology.links) {
+    if (link.source.host.id === hostId || link.target.host.id === hostId) {
+      const line = linkLines.get(link.key)
+      if (line) updateLinkLine(line, link, link.key === topology.selectedLinkKey)
+      const badge = linkBadges.get(link.key)
+      if (badge) updateLinkBadge(badge, link)
     }
   }
   mainLayer.value?.batchDraw()
@@ -146,16 +161,18 @@ function updateStyles() {
     updateNodeGroup(group, node, node.host.id === topology.selectedNodeId, state)
   }
 
-  for (const edge of topology.filteredEdges) {
-    const line = edgeLines.get(edge.connection.id)
+  for (const link of topology.links) {
+    const line = linkLines.get(link.key)
     if (!line) continue
-    updateEdgeLine(line, edge, edge.connection.id === topology.selectedEdgeId)
+    updateLinkLine(line, link, link.key === topology.selectedLinkKey)
     if (finding && findingConns.size > 0) {
-      if (findingConns.has(edge.connection.id)) {
-        line.opacity(1)
-      } else {
-        line.opacity(0.06)
-      }
+      const inFinding = link.edges.some((e) => findingConns.has(e.connection.id))
+      line.opacity(inFinding ? 1 : 0.06)
+      const badge = linkBadges.get(link.key)
+      if (badge) badge.opacity(inFinding ? 1 : 0.06)
+    } else {
+      const badge = linkBadges.get(link.key)
+      if (badge) badge.opacity(1)
     }
   }
 
@@ -177,7 +194,7 @@ onMounted(() => {
 
 // Full re-render when the visible graph changes
 watch(
-  () => [topology.filteredNodes, topology.filteredEdges],
+  () => [topology.filteredNodes, topology.links],
   () => renderGraph(),
 )
 
@@ -192,7 +209,7 @@ watch(
 )
 
 watch(
-  () => [topology.selectedNodeId, topology.selectedEdgeId],
+  () => [topology.selectedNodeId, topology.selectedEdgeId, topology.selectedLinkKey],
   () => updateStyles(),
 )
 watch(

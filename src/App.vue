@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted } from 'vue'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { useAppStore } from '@/stores/app'
 import { useTopologyStore } from '@/stores/topology'
@@ -10,6 +10,7 @@ import TopologyCanvas from '@/components/TopologyCanvas.vue'
 import TimelineBar from '@/components/TimelineBar.vue'
 import NodeDetailPanel from '@/components/NodeDetailPanel.vue'
 import EdgeDetailPanel from '@/components/EdgeDetailPanel.vue'
+import LinkDetailPanel from '@/components/LinkDetailPanel.vue'
 import SearchBar from '@/components/SearchBar.vue'
 import FilterBar from '@/components/FilterBar.vue'
 import FindingsPanel from '@/components/FindingsPanel.vue'
@@ -18,6 +19,14 @@ import LevelLegend from '@/components/LevelLegend.vue'
 const appStore = useAppStore()
 const topology = useTopologyStore()
 const { loadFile } = useTauri()
+
+// A detail panel sits on the right; the legend tucks in beside it when open.
+const panelOpen = computed(
+  () =>
+    topology.selectedNodeId !== null ||
+    topology.selectedEdgeId !== null ||
+    topology.selectedLinkKey !== null,
+)
 
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
@@ -60,17 +69,13 @@ onUnmounted(() => {
         <TopologyCanvas />
         <NodeDetailPanel v-if="topology.selectedNodeId !== null" />
         <EdgeDetailPanel v-if="topology.selectedEdgeId !== null" />
+        <LinkDetailPanel
+          v-if="topology.selectedEdgeId === null && topology.selectedLinkKey !== null"
+        />
         <div class="absolute bottom-3 left-83 z-10">
           <FilterBar />
         </div>
-        <div
-          class="absolute top-3 z-10"
-          :class="
-            topology.selectedNodeId !== null || topology.selectedEdgeId !== null
-              ? 'right-89'
-              : 'right-3'
-          "
-        >
+        <div class="absolute top-3 z-10" :class="panelOpen ? 'right-89' : 'right-3'">
           <LevelLegend />
         </div>
       </div>

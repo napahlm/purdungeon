@@ -5,6 +5,7 @@ import { useTauri } from '@/composables/useTauri'
 import type { HostDetail, ModbusHostActivity, Role } from '@/types/network'
 import { ROLE_LABELS, ASSIGNABLE_ROLES, effectiveLevel } from '@/types/network'
 import { LEVEL_COLORS } from '@/canvas/palette'
+import { formatBytes, formatTime } from '@/utils/format'
 
 const topology = useTopologyStore()
 const { getHostDetail, getModbusHostActivity, setRoleOverride, setLevelOverride } = useTauri()
@@ -71,17 +72,6 @@ async function onLevelChange(e: Event) {
   await setLevelOverride(host.value.id, level)
   host.value.level_override = level
   topology.refreshHost({ ...host.value })
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / 1048576).toFixed(1)} MB`
-}
-
-function formatTime(ts: number): string {
-  if (ts <= 0) return '—'
-  return new Date(ts * 1000).toLocaleString()
 }
 
 function registerRange(start: number, quantity: number): string {

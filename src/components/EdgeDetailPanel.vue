@@ -3,6 +3,7 @@ import { ref, watch, computed } from 'vue'
 import { useTopologyStore } from '@/stores/topology'
 import { useTauri } from '@/composables/useTauri'
 import type { ModbusConversation } from '@/types/network'
+import { formatBytes, formatTime, formatCadence } from '@/utils/format'
 
 const topology = useTopologyStore()
 const { getModbusConversation } = useTauri()
@@ -54,22 +55,6 @@ watch(
   },
   { immediate: true },
 )
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / 1048576).toFixed(1)} MB`
-}
-
-function formatTime(ts: number): string {
-  if (ts <= 0) return '—'
-  return new Date(ts * 1000).toLocaleString()
-}
-
-function formatCadence(ms: number): string {
-  if (ms < 1000) return `${ms.toFixed(0)} ms`
-  return `${(ms / 1000).toFixed(1)} s`
-}
 
 function close() {
   topology.selectEdge(null)

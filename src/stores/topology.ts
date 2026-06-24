@@ -2,7 +2,7 @@ import { ref, computed, shallowRef } from 'vue'
 import { defineStore } from 'pinia'
 import type { Host, Connection, Finding } from '@/types/network'
 import { effectiveLevel, effectiveRole } from '@/types/network'
-import type { CanvasNode, CanvasEdge, BandLayout } from '@/types/canvas'
+import type { CanvasNode, CanvasEdge, CanvasLink, BandLayout } from '@/types/canvas'
 import {
   BANDS,
   bandKeyForHost,
@@ -18,7 +18,6 @@ import { useTimelineStore } from './timeline'
 const BAND_HEIGHT = 220
 const NODE_SPACING = 130
 const BARYCENTER_SWEEPS = 4
-const CURVE_SPACING = 30
 
 function nodeShape(host: Host): CanvasNode['shape'] {
   const role = effectiveRole(host)
@@ -27,9 +26,11 @@ function nodeShape(host: Host): CanvasNode['shape'] {
   return 'circle'
 }
 
-function edgeWidth(conn: Connection): number {
-  const base = Math.log2(conn.byte_count / 512 + 2)
-  return Math.max(1, Math.min(base, 6))
+/** Link thickness from the pair's total bytes: floored so a thin link stays
+ *  visible, capped so a busy one can't bully its neighbours. */
+function linkWidth(totalBytes: number): number {
+  const base = Math.log2(totalBytes / 512 + 2)
+  return Math.max(1.5, Math.min(base, 8))
 }
 
 function ipSortKey(ip: string): number {
@@ -48,23 +49,49 @@ function addAdjacency(adjacency: Map<number, number[]>, a: number, b: number): v
   else adjacency.set(a, [b])
 }
 
-function assignCurveOffsets(edgeList: CanvasEdge[]): void {
+/** Collapse every conversation between a host pair into one straight link. */
+function buildLinks(edgeList: CanvasEdge[]): CanvasLink[] {
   const groups = new Map<string, CanvasEdge[]>()
   for (const e of edgeList) {
     const key = pairKey(e.source.host.id, e.target.host.id)
-    let arr = groups.get(key)
-    if (!arr) {
-      arr = []
-      groups.set(key, arr)
-    }
-    arr.push(e)
+    const arr = groups.get(key)
+    if (arr) arr.push(e)
+    else groups.set(key, [e])
   }
-  for (const group of groups.values()) {
-    const n = group.length
-    for (let i = 0; i < n; i++) {
-      group[i].curveOffset = n === 1 ? 0 : (i - (n - 1) / 2) * CURVE_SPACING
+
+  const links: CanvasLink[] = []
+  for (const [key, edges] of groups) {
+    const bytesByFamily = new Map<ProtoFamily, number>()
+    let totalBytes = 0
+    let crossZone = false
+    for (const e of edges) {
+      totalBytes += e.connection.byte_count
+      bytesByFamily.set(e.family, (bytesByFamily.get(e.family) ?? 0) + e.connection.byte_count)
+      if (e.crossZone) crossZone = true
     }
+    // Dominant protocol family by volume drives the link colour, unless the
+    // pair crosses a zone — a security signal that always wins.
+    let dominantFamily = edges[0].family
+    let max = -1
+    for (const [family, bytes] of bytesByFamily) {
+      if (bytes > max) {
+        max = bytes
+        dominantFamily = family
+      }
+    }
+    links.push({
+      key,
+      source: edges[0].source,
+      target: edges[0].target,
+      edges,
+      crossZone,
+      dominantFamily,
+      conversationCount: edges.length,
+      color: crossZone ? ALERT : PROTO_COLORS[dominantFamily],
+      width: linkWidth(totalBytes),
+    })
   }
+  return links
 }
 
 /**
@@ -148,6 +175,7 @@ export const useTopologyStore = defineStore('topology', () => {
   const layoutVersion = ref(0)
   const selectedNodeId = ref<number | null>(null)
   const selectedEdgeId = ref<number | null>(null)
+  const selectedLinkKey = ref<string | null>(null)
   const searchQuery = ref('')
 
   // Filters: empty sets mean "show everything"
@@ -169,12 +197,30 @@ export const useTopologyStore = defineStore('topology', () => {
       return
     }
     activeFindingId.value = finding.id
-    // A finding about exactly one conversation opens its detail directly
+    // A finding about exactly one conversation opens its detail directly; one
+    // about several conversations between the same pair opens their link list.
     if (finding.connection_ids.length === 1) {
       selectEdge(finding.connection_ids[0])
+    } else if (finding.connection_ids.length > 1) {
+      const key = sharedLinkKey(finding.connection_ids)
+      if (key) selectLink(key)
     } else if (finding.host_ids.length === 1) {
       selectNode(finding.host_ids[0])
     }
+  }
+
+  /** The link key shared by these conversations, or null if they span more
+   *  than one host pair (or no link is currently visible for them). */
+  function sharedLinkKey(connectionIds: number[]): string | null {
+    let key: string | null = null
+    for (const id of connectionIds) {
+      const c = connectionsById.value.get(id)
+      if (!c) return null
+      const k = pairKey(c.src_host_id, c.dst_host_id)
+      if (key === null) key = k
+      else if (key !== k) return null
+    }
+    return key && links.value.some((l) => l.key === key) ? key : null
   }
 
   const timelineStore = useTimelineStore()
@@ -215,6 +261,13 @@ export const useTopologyStore = defineStore('topology', () => {
     }
     return visibleNodes.value.filter((n) => activeHostIds.has(n.host.id))
   })
+
+  /** One straight link per host pair, derived from the visible conversations. */
+  const links = computed<CanvasLink[]>(() => buildLinks(filteredEdges.value))
+
+  const selectedLink = computed(
+    () => links.value.find((l) => l.key === selectedLinkKey.value) ?? null,
+  )
 
   /** Protocol families present in the capture, for the filter bar. */
   const presentFamilies = computed<ProtoFamily[]>(() => {
@@ -282,16 +335,14 @@ export const useTopologyStore = defineStore('topology', () => {
         source,
         target,
         color: crossZone ? ALERT : PROTO_COLORS[family],
-        width: edgeWidth(conn),
+        width: linkWidth(conn.byte_count),
         family,
         crossZone,
-        curveOffset: 0,
       })
       addAdjacency(adjacency, conn.src_host_id, conn.dst_host_id)
       addAdjacency(adjacency, conn.dst_host_id, conn.src_host_id)
     }
 
-    assignCurveOffsets(builtEdges)
     bands.value = layoutBands(built, adjacency)
     nodes.value = built
     edges.value = builtEdges
@@ -356,17 +407,31 @@ export const useTopologyStore = defineStore('topology', () => {
 
   function selectNode(hostId: number | null) {
     selectedNodeId.value = hostId
-    if (hostId !== null) selectedEdgeId.value = null
+    if (hostId !== null) {
+      selectedEdgeId.value = null
+      selectedLinkKey.value = null
+    }
   }
 
+  /** Select a single conversation. The parent link stays selected so closing
+   *  the conversation panel returns to its list. */
   function selectEdge(edgeId: number | null) {
     selectedEdgeId.value = edgeId
     if (edgeId !== null) selectedNodeId.value = null
   }
 
+  function selectLink(key: string | null) {
+    selectedLinkKey.value = key
+    if (key !== null) {
+      selectedNodeId.value = null
+      selectedEdgeId.value = null
+    }
+  }
+
   function clearSelection() {
     selectedNodeId.value = null
     selectedEdgeId.value = null
+    selectedLinkKey.value = null
     activeFindingId.value = null
   }
 
@@ -378,6 +443,7 @@ export const useTopologyStore = defineStore('topology', () => {
     connectionsById.value = new Map()
     selectedNodeId.value = null
     selectedEdgeId.value = null
+    selectedLinkKey.value = null
     searchQuery.value = ''
     hiddenFamilies.value = new Set()
     hiddenBands.value = new Set()
@@ -395,6 +461,7 @@ export const useTopologyStore = defineStore('topology', () => {
     layoutVersion,
     selectedNodeId,
     selectedEdgeId,
+    selectedLinkKey,
     searchQuery,
     hiddenFamilies,
     hiddenBands,
@@ -407,6 +474,8 @@ export const useTopologyStore = defineStore('topology', () => {
     crossZoneCount,
     filteredNodes,
     filteredEdges,
+    links,
+    selectedLink,
     matchedNodeIds,
     buildGraph,
     refreshHost,
@@ -415,6 +484,7 @@ export const useTopologyStore = defineStore('topology', () => {
     toggleBand,
     selectNode,
     selectEdge,
+    selectLink,
     clearSelection,
     reset,
   }

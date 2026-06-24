@@ -20,7 +20,23 @@ export interface CanvasEdge {
   width: number
   family: ProtoFamily
   crossZone: boolean
-  curveOffset: number // 0 = straight, nonzero = perpendicular offset for parallel edges
+}
+
+/**
+ * All conversations between one unordered pair of hosts, collapsed into a
+ * single straight link. The canvas draws links, not individual edges; the
+ * underlying `edges` drive the conversations list and finding highlights.
+ */
+export interface CanvasLink {
+  key: string // pairKey(source.host.id, target.host.id)
+  source: CanvasNode
+  target: CanvasNode
+  edges: CanvasEdge[]
+  color: string
+  width: number
+  crossZone: boolean
+  dominantFamily: ProtoFamily
+  conversationCount: number
 }
 
 /** A populated horizontal band in the laid-out view. */
