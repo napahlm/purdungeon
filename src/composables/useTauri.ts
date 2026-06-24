@@ -39,6 +39,10 @@ export function useTauri() {
     return invoke<ImportResult>('import_pcap', { path })
   }
 
+  async function addPcap(path: string): Promise<ImportResult> {
+    return invoke<ImportResult>('add_pcap', { path })
+  }
+
   async function getHosts(): Promise<Host[]> {
     return invoke<Host[]>('get_hosts')
   }
@@ -83,7 +87,12 @@ export function useTauri() {
     return invoke<void>('set_level_override', { hostId, level })
   }
 
-  async function loadFile(path: string) {
+  /**
+   * Load a capture. `replace` starts a fresh session; `append` stitches the
+   * file into the current one. Either way the graph is rebuilt from the
+   * (possibly merged) session.
+   */
+  async function loadFile(path: string, mode: 'replace' | 'append' = 'replace') {
     const appStore = useAppStore()
     const topologyStore = useTopologyStore()
     const timelineStore = useTimelineStore()
@@ -106,11 +115,17 @@ export function useTauri() {
       appStore.setStage(event.payload)
     })
     try {
-      const result = await importPcap(path)
+      const result = mode === 'append' ? await addPcap(path) : await importPcap(path)
       if (result.packet_count === 0) {
-        appStore.setError(
-          'No readable network traffic in this capture. purdungeon currently reads IPv4 over Ethernet.',
-        )
+        // On a fresh load that's an error; on an append it just means this file
+        // added nothing — leave the existing view in place.
+        if (mode === 'replace') {
+          appStore.setError(
+            'No readable network traffic in this capture. purdungeon currently reads IPv4 over Ethernet.',
+          )
+        } else {
+          appStore.addSource(path, 0)
+        }
         return
       }
       appStore.setStage('building-view')
@@ -120,12 +135,15 @@ export function useTauri() {
         getTimeRange(),
         getFindings(),
       ])
-      // Clear selection, filters, and findings left over from a previous capture
-      topologyStore.reset()
+      if (mode === 'replace') {
+        // Clear selection, filters, and findings left over from a previous capture
+        topologyStore.reset()
+      }
       timelineStore.setFullRange(timeRange[0], timeRange[1])
       topologyStore.buildGraph(hosts, connections)
       topologyStore.findings = findings
-      appStore.setLoadedFile(path)
+      if (mode === 'replace') appStore.setLoadedFile(path, result.packet_count)
+      else appStore.addSource(path, result.packet_count)
     } catch (e) {
       appStore.setError(humanizeError(e instanceof Error ? e.message : String(e)))
     } finally {
@@ -135,8 +153,28 @@ export function useTauri() {
     }
   }
 
+  /**
+   * Load several captures in one gesture: the first replaces the session (or
+   * appends if one is already open), the rest stitch in, so the network grows
+   * file by file. Stops if a file fails.
+   */
+  async function loadFiles(paths: string[]) {
+    const appStore = useAppStore()
+    const captures = paths.filter(isCaptureFile)
+    if (captures.length === 0) {
+      appStore.setError('No capture files here. Drop a .pcap or .pcapng instead.')
+      return
+    }
+    for (let i = 0; i < captures.length; i++) {
+      const mode = i === 0 && appStore.loadedFile === null ? 'replace' : 'append'
+      await loadFile(captures[i], mode)
+      if (appStore.error) break
+    }
+  }
+
   return {
     importPcap,
+    addPcap,
     getHosts,
     getConnections,
     getTimeRange,
@@ -149,5 +187,6 @@ export function useTauri() {
     setRoleOverride,
     setLevelOverride,
     loadFile,
+    loadFiles,
   }
 }

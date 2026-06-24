@@ -50,6 +50,25 @@ impl Session {
         ))
     }
 
+    /// Merge another capture into this session: parse it into the existing
+    /// database without clearing, then re-run the analysis pass over the whole
+    /// merged dataset so roles, levels, and findings reflect every file. User
+    /// role/level overrides are preserved — re-inference only writes the
+    /// inferred columns.
+    pub fn add_capture(
+        &self,
+        pcap_path: &Path,
+        progress: &AtomicU64,
+        on_stage: &(dyn Fn(ImportStage) + Send + Sync),
+    ) -> Result<ImportResult, CoreError> {
+        self.with_conn(|conn| {
+            on_stage(ImportStage::ReadingPackets);
+            let result = ingest::pcap::append_pcap(pcap_path, conn, progress)?;
+            analysis::run(conn, on_stage)?;
+            Ok(result)
+        })
+    }
+
     fn with_conn<T>(
         &self,
         f: impl FnOnce(&rusqlite::Connection) -> Result<T, CoreError>,

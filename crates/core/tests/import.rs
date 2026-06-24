@@ -62,6 +62,35 @@ fn write_pcap(packets: &[(f64, Vec<u8>)]) -> Vec<u8> {
     buf
 }
 
+/// A second capture: the SCADA keeps polling PLC A (an overlapping flow that
+/// must fuse) and a new HMI appears polling a new PLC D.
+const HMI_MAC: [u8; 6] = [0x00, 0x0c, 0x29, 0xaa, 0xbb, 0xcc];
+const HMI_IP: [u8; 4] = [192, 168, 10, 50];
+const PLC_D_IP: [u8; 4] = [192, 168, 10, 4];
+
+fn follow_up_capture() -> Vec<(f64, Vec<u8>)> {
+    let mut packets = Vec::new();
+    let mut ts = 1_700_000_100.0;
+    let mut tid: u16 = 1;
+    for _ in 0..5 {
+        // SCADA → PLC A on the same flow tuple as the first capture (port 49000)
+        let req = mbap(tid, 1, &[0x03, 0x00, 0x00, 0x00, 0x0A]);
+        packets.push((
+            ts,
+            tcp_packet(SCADA_MAC, PLC_MAC, SCADA_IP, PLC_A_IP, 49000, 502, &req),
+        ));
+        // New HMI → new PLC D
+        let req2 = mbap(tid, 1, &[0x03, 0x00, 0x00, 0x00, 0x0A]);
+        packets.push((
+            ts + 0.01,
+            tcp_packet(HMI_MAC, PLC_MAC, HMI_IP, PLC_D_IP, 50000, 502, &req2),
+        ));
+        tid = tid.wrapping_add(1);
+        ts += 1.0;
+    }
+    packets
+}
+
 fn polling_capture() -> Vec<(f64, Vec<u8>)> {
     let mut packets = Vec::new();
     let mut ts = 1_700_000_000.0;
@@ -150,4 +179,73 @@ fn import_discovers_roles_and_modbus_activity() {
         "write finding missing: {findings:?}"
     );
     assert!(findings.iter().any(|f| f.kind == "cleartext"));
+}
+
+#[test]
+fn add_capture_merges_hosts_and_fuses_flows() {
+    let dir = std::env::temp_dir();
+    let pid = std::process::id();
+
+    let pcap_a = write_pcap(&polling_capture());
+    let path_a = dir.join(format!("purdungeon-stitch-a-{pid}.pcap"));
+    std::fs::write(&path_a, &pcap_a).unwrap();
+
+    let progress = AtomicU64::new(0);
+    let (session, _first) = Session::import(&path_a, &progress, &|_| {}).unwrap();
+
+    let connections_before = session.connections().unwrap().len();
+
+    // Override PLC A's role; the override must survive re-analysis on append.
+    let plc_a_id = session
+        .hosts()
+        .unwrap()
+        .into_iter()
+        .find(|h| h.ip_address == "192.168.10.1")
+        .unwrap()
+        .id;
+    session.set_role_override(plc_a_id, Some("historian")).unwrap();
+
+    // Append a second capture that overlaps one flow and adds an HMI + PLC D.
+    let pcap_b = write_pcap(&follow_up_capture());
+    let path_b = dir.join(format!("purdungeon-stitch-b-{pid}.pcap"));
+    std::fs::write(&path_b, &pcap_b).unwrap();
+    let progress_b = AtomicU64::new(0);
+    session.add_capture(&path_b, &progress_b, &|_| {}).unwrap();
+
+    std::fs::remove_file(&path_a).ok();
+    std::fs::remove_file(&path_b).ok();
+
+    let hosts = session.hosts().unwrap();
+    // Original four plus the new HMI and PLC D
+    assert!(
+        hosts.iter().any(|h| h.ip_address == "192.168.10.50"),
+        "new HMI host missing after append"
+    );
+    assert!(
+        hosts.iter().any(|h| h.ip_address == "192.168.10.4"),
+        "new PLC D host missing after append"
+    );
+    assert_eq!(hosts.len(), 6, "expected union of hosts across both captures");
+
+    // The overlapping SCADA→PLC A flow fused: exactly one new flow row was
+    // added (HMI→PLC D), not a duplicate of the existing one.
+    let connections_after = session.connections().unwrap();
+    assert_eq!(
+        connections_after.len(),
+        connections_before + 1,
+        "overlapping flow should fuse, only the HMI→PLC D flow is new"
+    );
+
+    // Re-analysis ran over the merged set but left the user override intact.
+    let plc_a = hosts.iter().find(|h| h.id == plc_a_id).unwrap();
+    assert_eq!(
+        plc_a.role_override.as_deref(),
+        Some("historian"),
+        "user role override must survive an append"
+    );
+
+    // Findings were regenerated, not duplicated.
+    let findings = session.findings().unwrap();
+    let cleartext = findings.iter().filter(|f| f.kind == "cleartext").count();
+    assert_eq!(cleartext, 1, "findings should be regenerated, not stacked");
 }

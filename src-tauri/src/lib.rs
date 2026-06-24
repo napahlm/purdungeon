@@ -1,11 +1,13 @@
 mod commands;
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use purdungeon_core::{CoreError, Session};
 
 pub struct AppState {
-    pub session: Mutex<Option<Session>>,
+    // Arc so an async command can hand a clone to a blocking task while the
+    // session lives on in shared state.
+    pub session: Arc<Mutex<Option<Session>>>,
 }
 
 impl AppState {
@@ -28,10 +30,11 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
-            session: Mutex::new(None),
+            session: Arc::new(Mutex::new(None)),
         })
         .invoke_handler(tauri::generate_handler![
             commands::import::import_pcap,
+            commands::import::add_pcap,
             commands::query::get_hosts,
             commands::query::get_connections,
             commands::query::get_time_range,

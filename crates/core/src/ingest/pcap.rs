@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::Read;
+use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -14,44 +14,75 @@ use crate::oui;
 use crate::protocols::modbus;
 use crate::CoreError;
 
+/// Parse a capture into a fresh session, clearing any existing data first.
 pub fn parse_pcap(
     path: &Path,
     conn: &rusqlite::Connection,
     progress: &AtomicU64,
 ) -> Result<ImportResult, CoreError> {
-    let mut file = File::open(path)?;
-    let mut buf = Vec::new();
-    file.read_to_end(&mut buf)?;
+    ingest(path, conn, progress, false)
+}
 
-    // Clear stale data and drop indexes for fast bulk insert
-    schema::clear_data(conn)?;
+/// Parse a capture into the *existing* session, merging its hosts and flows
+/// with what is already there. Flows seen in more than one file fuse into a
+/// single conversation row rather than duplicating.
+pub fn append_pcap(
+    path: &Path,
+    conn: &rusqlite::Connection,
+    progress: &AtomicU64,
+) -> Result<ImportResult, CoreError> {
+    ingest(path, conn, progress, true)
+}
+
+fn ingest(
+    path: &Path,
+    conn: &rusqlite::Connection,
+    progress: &AtomicU64,
+    append: bool,
+) -> Result<ImportResult, CoreError> {
+    // Stream from the file rather than reading it whole into memory, so several
+    // large captures don't multiply RAM. Peek the magic to pick the reader,
+    // then rewind.
+    let file = File::open(path)?;
+    let mut reader = BufReader::new(file);
+    let mut magic = [0u8; 4];
+    if reader.read_exact(&mut magic).is_err() {
+        return Err(CoreError::Parse("file too small".into()));
+    }
+    reader.seek(SeekFrom::Start(0))?;
+    let is_pcapng = u32::from_le_bytes(magic) == 0x0A0D_0D0A;
+
+    // A fresh import wipes prior data; an append keeps it and adds to it.
+    if !append {
+        schema::clear_data(conn)?;
+    }
     schema::drop_packet_indexes(conn)?;
 
-    // Single transaction for the entire import
+    // Single transaction for the entire ingest
     conn.execute_batch("BEGIN EXCLUSIVE")?;
 
     let mut host_map: HashMap<String, i64> = HashMap::new();
     let mut conn_map: HashMap<String, (i64, bool)> = HashMap::new();
+    // On append, seed the caches from existing rows so the same host or flow
+    // resolves to its existing id instead of being inserted again.
+    if append {
+        if let Err(e) = preload_caches(conn, &mut host_map, &mut conn_map) {
+            let _ = conn.execute_batch("ROLLBACK");
+            return Err(e);
+        }
+    }
     let mut packet_count: usize = 0;
     let mut min_ts: f64 = f64::MAX;
     let mut max_ts: f64 = f64::MIN;
 
-    if buf.len() < 4 {
-        conn.execute_batch("ROLLBACK")?;
-        return Err(CoreError::Parse("file too small".into()));
-    }
-
-    let magic = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
-    let is_pcapng = magic == 0x0A0D_0D0A;
-
     let result = if is_pcapng {
         parse_pcapng_data(
-            &buf, conn, &mut host_map, &mut conn_map,
+            reader, conn, &mut host_map, &mut conn_map,
             &mut packet_count, &mut min_ts, &mut max_ts, progress,
         )
     } else {
         parse_legacy_data(
-            &buf, conn, &mut host_map, &mut conn_map,
+            reader, conn, &mut host_map, &mut conn_map,
             &mut packet_count, &mut min_ts, &mut max_ts, progress,
         )
     };
@@ -79,9 +110,49 @@ pub fn parse_pcap(
     })
 }
 
+/// Rebuild the host and connection caches from the session so an append reuses
+/// existing ids. `host_map` keys on IP; `conn_map` keys on the same flow key
+/// the parser builds (`src:port-dst:port-proto`).
+fn preload_caches(
+    conn: &rusqlite::Connection,
+    host_map: &mut HashMap<String, i64>,
+    conn_map: &mut HashMap<String, (i64, bool)>,
+) -> Result<(), CoreError> {
+    let mut stmt = conn.prepare("SELECT ip_address, id FROM hosts")?;
+    let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))?;
+    for row in rows {
+        let (ip, id) = row?;
+        host_map.insert(ip, id);
+    }
+
+    let mut stmt = conn.prepare(
+        "SELECT c.id, hs.ip_address, c.src_port, ds.ip_address, c.dst_port, c.protocol, c.app_protocol
+         FROM connections c
+         JOIN hosts hs ON hs.id = c.src_host_id
+         JOIN hosts ds ON ds.id = c.dst_host_id",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, u16>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, u16>(4)?,
+            row.get::<_, String>(5)?,
+            row.get::<_, Option<String>>(6)?,
+        ))
+    })?;
+    for row in rows {
+        let (id, src_ip, src_port, dst_ip, dst_port, protocol, app_protocol) = row?;
+        let flow_key = format!("{src_ip}:{src_port}-{dst_ip}:{dst_port}-{protocol}");
+        conn_map.insert(flow_key, (id, app_protocol.is_some()));
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
-fn parse_pcapng_data(
-    data: &[u8],
+fn parse_pcapng_data<R: Read>(
+    source: R,
     conn: &rusqlite::Connection,
     host_map: &mut HashMap<String, i64>,
     conn_map: &mut HashMap<String, (i64, bool)>,
@@ -90,7 +161,7 @@ fn parse_pcapng_data(
     max_ts: &mut f64,
     progress: &AtomicU64,
 ) -> Result<(), CoreError> {
-    let mut reader = PcapNGReader::new(65536, std::io::Cursor::new(data))
+    let mut reader = PcapNGReader::new(65536, source)
         .map_err(|e| CoreError::Parse(format!("pcapng reader: {e}")))?;
 
     let mut if_info: Vec<(u64, u64)> = Vec::new();
@@ -139,8 +210,8 @@ fn parse_pcapng_data(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn parse_legacy_data(
-    data: &[u8],
+fn parse_legacy_data<R: Read>(
+    source: R,
     conn: &rusqlite::Connection,
     host_map: &mut HashMap<String, i64>,
     conn_map: &mut HashMap<String, (i64, bool)>,
@@ -149,7 +220,7 @@ fn parse_legacy_data(
     max_ts: &mut f64,
     progress: &AtomicU64,
 ) -> Result<(), CoreError> {
-    let mut reader = LegacyPcapReader::new(65536, std::io::Cursor::new(data))
+    let mut reader = LegacyPcapReader::new(65536, source)
         .map_err(|e| CoreError::Parse(format!("pcap reader: {e}")))?;
 
     loop {

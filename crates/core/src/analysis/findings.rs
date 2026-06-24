@@ -26,6 +26,10 @@ struct FindingRow {
 }
 
 pub fn generate(conn: &Connection) -> Result<(), CoreError> {
+    // Findings are derived from the whole dataset, so re-running after an
+    // appended capture must start clean rather than stack duplicates.
+    conn.execute_batch("DELETE FROM findings")?;
+
     let hosts = load_hosts(conn)?;
     let mut findings: Vec<FindingRow> = Vec::new();
 

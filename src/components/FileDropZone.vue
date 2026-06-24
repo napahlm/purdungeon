@@ -5,7 +5,7 @@ import { useTauri } from '@/composables/useTauri'
 import { useAppStore, IMPORT_STAGES } from '@/stores/app'
 
 const appStore = useAppStore()
-const { loadFile } = useTauri()
+const { loadFiles } = useTauri()
 
 // Drag-drop events are handled at the app root; this only mirrors the hover
 const hovering = computed(() => appStore.dragHovering)
@@ -22,10 +22,11 @@ function stageState(index: number): 'done' | 'active' | 'pending' {
 
 async function openFilePicker() {
   const selected = await open({
-    multiple: false,
+    multiple: true,
     filters: [{ name: 'Packet captures', extensions: ['pcap', 'pcapng', 'cap'] }],
   })
-  if (selected) await loadFile(selected)
+  if (!selected) return
+  await loadFiles(Array.isArray(selected) ? selected : [selected])
 }
 </script>
 
@@ -120,13 +121,13 @@ async function openFilePicker() {
             d="M12 16V4m0 0L8 8m4-4 4 4M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"
           />
         </svg>
-        <p class="text-sm text-text-secondary">Drop a capture anywhere</p>
-        <p class="text-xs text-text-muted">.pcap or .pcapng</p>
+        <p class="text-sm text-text-secondary">Drop one or more captures</p>
+        <p class="text-xs text-text-muted">.pcap or .pcapng · several files stitch together</p>
         <button
           class="mt-2 rounded-lg bg-bg-elevated px-4 py-1.5 text-sm text-text-primary transition-colors hover:bg-border"
           @click="openFilePicker"
         >
-          Choose a file
+          Choose files
         </button>
       </div>
 
