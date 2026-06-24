@@ -13,6 +13,7 @@ import {
   ALERT,
   type ProtoFamily,
 } from '@/canvas/palette'
+import { parseCidr, ipInCidr, TRANSPORT_TOKENS } from '@/utils/search'
 import { useTimelineStore } from './timeline'
 
 const BAND_HEIGHT = 220
@@ -155,6 +156,30 @@ function layoutBands(nodes: CanvasNode[], adjacency: Map<number, number[]>): Ban
   return layouts
 }
 
+/**
+ * Recompute band y-offsets for the currently-occupied levels and drop each
+ * node onto its band's centre line, keeping its x. Used after an override
+ * changes which levels exist, so the arrangement reflows vertically without
+ * losing the user's horizontal layout.
+ */
+function reflowBands(nodes: CanvasNode[]): BandLayout[] {
+  const occupied = new Set(nodes.map((n) => n.bandKey))
+  const populated = BANDS.filter((b) => occupied.has(b.key))
+  const layouts: BandLayout[] = populated.map((b, i) => ({
+    key: b.key,
+    label: b.label,
+    y: i * BAND_HEIGHT,
+    height: BAND_HEIGHT,
+    index: i,
+  }))
+  const byKey = new Map(layouts.map((l) => [l.key, l]))
+  for (const node of nodes) {
+    const layout = byKey.get(node.bandKey)
+    if (layout) node.y = layout.y + layout.height / 2
+  }
+  return layouts
+}
+
 function respace(band: CanvasNode[], layout: BandLayout): void {
   const n = band.length
   for (let i = 0; i < n; i++) {
@@ -278,26 +303,75 @@ export const useTopologyStore = defineStore('topology', () => {
 
   const crossZoneCount = computed(() => edges.value.filter((e) => e.crossZone).length)
 
-  const matchedNodeIds = computed<Set<number>>(() => {
-    const q = searchQuery.value.trim().toLowerCase()
-    if (!q) return new Set()
-    const matched = new Set<number>()
+  /**
+   * Search understands more than substrings: a CIDR like `10.0.0.0/25` matches
+   * hosts by subnet, a transport token (`tcp`/`udp`/`icmp`) or a protocol name
+   * (`modbus`, `s7comm`, …) highlights that traffic and its endpoints, and
+   * anything else falls back to matching host IP/MAC/role/vendor/protocols.
+   */
+  const searchMatch = computed<{ nodeIds: Set<number>; linkKeys: Set<string> }>(() => {
+    const raw = searchQuery.value.trim()
+    const q = raw.toLowerCase()
+    const nodeIds = new Set<number>()
+    const linkKeys = new Set<string>()
+    if (!q) return { nodeIds, linkKeys }
+
+    const cidr = parseCidr(raw)
+    const transport = TRANSPORT_TOKENS.has(q) ? q.toUpperCase() : null
+
+    // Host matches (skipped for a pure transport query, which is about traffic)
     for (const node of nodes.value) {
       const h = node.host
-      if (
-        h.ip_address.toLowerCase().includes(q) ||
-        h.mac_address.toLowerCase().includes(q) ||
-        effectiveRole(h).toLowerCase().includes(q) ||
-        (h.vendor ?? '').toLowerCase().includes(q) ||
-        h.protocols.toLowerCase().includes(q)
-      ) {
-        matched.add(h.id)
+      let hit = false
+      if (cidr) {
+        hit = ipInCidr(h.ip_address, cidr)
+      } else if (!transport) {
+        hit =
+          h.ip_address.toLowerCase().includes(q) ||
+          h.mac_address.toLowerCase().includes(q) ||
+          effectiveRole(h).toLowerCase().includes(q) ||
+          (h.vendor ?? '').toLowerCase().includes(q) ||
+          h.protocols.toLowerCase().includes(q)
+      }
+      if (hit) nodeIds.add(h.id)
+    }
+
+    // Protocol / transport matches highlight the link and both its endpoints
+    if (!cidr) {
+      for (const link of links.value) {
+        const hit = link.edges.some((e) =>
+          transport
+            ? e.connection.protocol.toUpperCase() === transport
+            : e.family === q || e.connection.app_protocol?.toLowerCase() === q,
+        )
+        if (hit) {
+          linkKeys.add(link.key)
+          nodeIds.add(link.source.host.id)
+          nodeIds.add(link.target.host.id)
+        }
       }
     }
-    return matched
+
+    // For host-oriented searches, also light up links fully inside the match.
+    if (linkKeys.size === 0) {
+      for (const link of links.value) {
+        if (nodeIds.has(link.source.host.id) && nodeIds.has(link.target.host.id)) {
+          linkKeys.add(link.key)
+        }
+      }
+    }
+
+    return { nodeIds, linkKeys }
   })
 
-  function buildGraph(hosts: Host[], connections: Connection[]) {
+  const matchedNodeIds = computed(() => searchMatch.value.nodeIds)
+  const matchedLinkKeys = computed(() => searchMatch.value.linkKeys)
+
+  function buildGraph(
+    hosts: Host[],
+    connections: Connection[],
+    positions: [number, number, number][] = [],
+  ) {
     hostsById.value = new Map(hosts.map((h) => [h.id, h]))
     connectionsById.value = new Map(connections.map((c) => [c.id, c]))
 
@@ -344,12 +418,30 @@ export const useTopologyStore = defineStore('topology', () => {
     }
 
     bands.value = layoutBands(built, adjacency)
+    // Honour positions the user has already arranged this session; nodes added
+    // since (e.g. by a stitched capture) keep their computed spot.
+    if (positions.length > 0) {
+      const saved = new Map(positions.map(([id, x, y]) => [id, { x, y }]))
+      for (const node of built) {
+        const p = saved.get(node.host.id)
+        if (p) {
+          node.x = p.x
+          node.y = p.y
+        }
+      }
+    }
     nodes.value = built
     edges.value = builtEdges
     layoutVersion.value++
   }
 
-  /** Re-derive band, color, and shape after a role/level override. */
+  /**
+   * Re-derive band, color, and shape after a role/level override — without
+   * disturbing the layout the user has arranged. Only the changed node moves
+   * (to its new band); everyone keeps their horizontal position, and the view
+   * is not re-fit. Bands are restacked vertically only when the override adds
+   * or empties a level.
+   */
   function refreshHost(updated: Host) {
     hostsById.value.set(updated.id, updated)
     const node = nodes.value.find((n) => n.host.id === updated.id)
@@ -357,24 +449,34 @@ export const useTopologyStore = defineStore('topology', () => {
     node.host = updated
     node.color = levelColor(updated)
     node.shape = nodeShape(updated)
+
     const newBand = bandKeyForHost(updated)
     if (newBand && newBand !== node.bandKey) {
-      // Band changed: relayout everything so the node moves to its level
-      const adjacency = new Map<number, number[]>()
-      for (const e of edges.value) {
-        addAdjacency(adjacency, e.source.host.id, e.target.host.id)
-        addAdjacency(adjacency, e.target.host.id, e.source.host.id)
-      }
+      const occupiedBefore = new Set(nodes.value.map((n) => n.bandKey))
       node.bandKey = newBand
-      bands.value = layoutBands(nodes.value, adjacency)
+      const occupiedAfter = new Set(nodes.value.map((n) => n.bandKey))
+      const bandsChanged =
+        occupiedBefore.size !== occupiedAfter.size ||
+        [...occupiedAfter].some((k) => !occupiedBefore.has(k))
+      if (bandsChanged) {
+        // A level appeared or emptied: restack bands but keep each node's x.
+        bands.value = reflowBands(nodes.value)
+      } else {
+        const band = bands.value.find((b) => b.key === newBand)
+        if (band) node.y = band.y + band.height / 2
+      }
     }
+
     for (const e of edges.value) {
       if (e.source.host.id === updated.id || e.target.host.id === updated.id) {
         e.crossZone = isCrossZone(effectiveLevel(e.source.host), effectiveLevel(e.target.host))
         e.color = e.crossZone ? ALERT : PROTO_COLORS[e.family]
       }
     }
-    layoutVersion.value++
+    // Re-emit so the derived links (and their colours) refresh and the canvas
+    // re-renders in place — no relayout, no re-fit.
+    nodes.value = [...nodes.value]
+    edges.value = [...edges.value]
   }
 
   /** Drag: free horizontally, clamped to the node's band vertically. */
@@ -477,6 +579,7 @@ export const useTopologyStore = defineStore('topology', () => {
     links,
     selectedLink,
     matchedNodeIds,
+    matchedLinkKeys,
     buildGraph,
     refreshHost,
     moveNode,

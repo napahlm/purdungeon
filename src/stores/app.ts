@@ -20,6 +20,16 @@ export const IMPORT_STAGES: { id: ImportStage; label: string }[] = [
   { id: 'building-view', label: 'Building the view' },
 ]
 
+/** Minimum on-screen time for each import step, so every stage is briefly
+ *  visible even when the backend blows through it. A slow stage shows for as
+ *  long as it actually takes; this only sets the floor. */
+export const IMPORT_STEP_MIN_MS = 220
+
+/** How long the fully-checkmarked list lingers before the view opens. */
+const IMPORT_DONE_HOLD_MS = 450
+
+const STAGE_COUNT = IMPORT_STAGES.length
+
 /** One capture that has been stitched into the current session. */
 export interface CaptureSource {
   path: string
@@ -36,18 +46,87 @@ export const useAppStore = defineStore('app', () => {
   const importProgress = ref(0) // 0.0 – 1.0, within the reading stage
   const stage = ref<ImportStage | null>(null)
   const dragHovering = ref(false)
+  // Position of the file being imported within a multi-file batch (1-based),
+  // and the batch size — drives the "File 2 of 3" line.
+  const currentFile = ref(0)
+  const totalFiles = ref(0)
 
-  function setLoading(value: boolean) {
-    loading.value = value
-    if (value) {
-      importProgress.value = 0
-      stage.value = null
-      error.value = null
+  // Step pacing: `displayStage` is the index of the step currently shown as
+  // active. It advances toward the real backend stage (`targetStage`) at most
+  // one step per IMPORT_STEP_MIN_MS, so each step is on screen for at least
+  // that long. When work is done it climbs to STAGE_COUNT — one past the last
+  // step — so every item, including the last, ends with a checkmark.
+  const displayStage = ref(0)
+  let targetStage = 0
+  let workDone = false
+  let ticker: ReturnType<typeof setInterval> | null = null
+  let holdTimer: ReturnType<typeof setTimeout> | null = null
+  let drainResolve: (() => void) | null = null
+
+  function clearTimers() {
+    if (ticker !== null) {
+      clearInterval(ticker)
+      ticker = null
     }
+    if (holdTimer !== null) {
+      clearTimeout(holdTimer)
+      holdTimer = null
+    }
+  }
+
+  function finishDrain() {
+    loading.value = false
+    const resolve = drainResolve
+    drainResolve = null
+    resolve?.()
+  }
+
+  function tick() {
+    if (displayStage.value < targetStage) displayStage.value++
+    // Reached the end with every step checkmarked: hold the completed list a
+    // moment, then open the view.
+    if (workDone && displayStage.value >= STAGE_COUNT && holdTimer === null) {
+      if (ticker !== null) {
+        clearInterval(ticker)
+        ticker = null
+      }
+      holdTimer = setTimeout(finishDrain, IMPORT_DONE_HOLD_MS)
+    }
+  }
+
+  /** Begin importing one file of a batch. */
+  function startLoading(fileIndex: number, fileCount: number) {
+    loading.value = true
+    currentFile.value = fileIndex
+    totalFiles.value = fileCount
+    importProgress.value = 0
+    stage.value = null
+    error.value = null
+    displayStage.value = 0
+    targetStage = 0
+    workDone = false
+    clearTimers()
+    ticker = setInterval(tick, IMPORT_STEP_MIN_MS)
+  }
+
+  /** Mark the work complete and resolve once the stepper has drained to the
+   *  end (all checkmarks) and the brief completed-state hold has elapsed. */
+  function finishLoading(): Promise<void> {
+    workDone = true
+    targetStage = STAGE_COUNT
+    if (!loading.value) {
+      clearTimers()
+      return Promise.resolve()
+    }
+    return new Promise((resolve) => {
+      drainResolve = resolve
+    })
   }
 
   function setStage(value: ImportStage) {
     stage.value = value
+    const i = IMPORT_STAGES.findIndex((s) => s.id === value)
+    if (i > targetStage) targetStage = i
   }
 
   /** A fresh capture replaces the session: it becomes the first source. */
@@ -66,15 +145,29 @@ export const useAppStore = defineStore('app', () => {
     error.value = message
     loading.value = false
     stage.value = null
+    clearTimers()
+    const resolve = drainResolve
+    drainResolve = null
+    resolve?.()
+  }
+
+  function clearError() {
+    error.value = null
   }
 
   function reset() {
+    clearTimers()
     loading.value = false
     loadedFile.value = null
     sources.value = []
     error.value = null
     importProgress.value = 0
     stage.value = null
+    currentFile.value = 0
+    totalFiles.value = 0
+    displayStage.value = 0
+    targetStage = 0
+    workDone = false
   }
 
   return {
@@ -85,11 +178,16 @@ export const useAppStore = defineStore('app', () => {
     importProgress,
     stage,
     dragHovering,
-    setLoading,
+    currentFile,
+    totalFiles,
+    displayStage,
+    startLoading,
+    finishLoading,
     setStage,
     setLoadedFile,
     addSource,
     setError,
+    clearError,
     reset,
   }
 })

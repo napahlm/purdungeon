@@ -70,20 +70,28 @@ export function useCanvas(containerRef: Ref<HTMLDivElement | null>) {
     s.height(el.clientHeight)
   }
 
-  /** Center the given content rect in the viewport, zoomed to fit. */
-  function fitToContent(bounds: { x: number; y: number; width: number; height: number }) {
+  /**
+   * Center the given content rect in the viewport, zoomed to fit. `insetLeft`
+   * reserves space on the left for the findings panel, which overlays the
+   * canvas, so content frames into the clear area beside it.
+   */
+  function fitToContent(
+    bounds: { x: number; y: number; width: number; height: number },
+    insetLeft = 0,
+  ) {
     const s = stage.value
     if (!s || bounds.width <= 0 || bounds.height <= 0) return
     const pad = 70
+    const availWidth = Math.max(1, s.width() - insetLeft)
     const fit = Math.min(
-      (s.width() - pad * 2) / bounds.width,
+      (availWidth - pad * 2) / bounds.width,
       (s.height() - pad * 2) / bounds.height,
       1.4,
     )
     const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, fit))
     s.scale({ x: newScale, y: newScale })
     s.position({
-      x: s.width() / 2 - (bounds.x + bounds.width / 2) * newScale,
+      x: insetLeft + availWidth / 2 - (bounds.x + bounds.width / 2) * newScale,
       y: s.height() / 2 - (bounds.y + bounds.height / 2) * newScale,
     })
     scale.value = newScale

@@ -2,23 +2,14 @@
 import { computed } from 'vue'
 import { open } from '@tauri-apps/plugin-dialog'
 import { useTauri } from '@/composables/useTauri'
-import { useAppStore, IMPORT_STAGES } from '@/stores/app'
+import { useAppStore } from '@/stores/app'
 
 const appStore = useAppStore()
 const { loadFiles } = useTauri()
 
-// Drag-drop events are handled at the app root; this only mirrors the hover
+// Drag-drop events are handled at the app root; this only mirrors the hover.
+// Loading and error feedback live in LoadingOverlay.
 const hovering = computed(() => appStore.dragHovering)
-const progressPct = computed(() => Math.round(appStore.importProgress * 100))
-
-const currentStageIndex = computed(() => IMPORT_STAGES.findIndex((s) => s.id === appStore.stage))
-
-function stageState(index: number): 'done' | 'active' | 'pending' {
-  if (currentStageIndex.value < 0) return 'pending'
-  if (index < currentStageIndex.value) return 'done'
-  if (index === currentStageIndex.value) return 'active'
-  return 'pending'
-}
 
 async function openFilePicker() {
   const selected = await open({
@@ -35,69 +26,7 @@ async function openFilePicker() {
     class="flex h-full w-full flex-col items-center justify-center transition-colors duration-200"
     :class="hovering ? 'bg-bg-secondary' : ''"
   >
-    <!-- Loading: honest stages -->
-    <div v-if="appStore.loading" class="flex w-72 flex-col gap-6">
-      <div>
-        <h1 class="text-lg font-semibold text-text-primary">Reading capture</h1>
-        <p class="mt-1 text-sm text-text-muted">This stays on your machine.</p>
-      </div>
-
-      <ol class="flex flex-col gap-3">
-        <li
-          v-for="(s, i) in IMPORT_STAGES"
-          :key="s.id"
-          class="flex items-center gap-3 text-sm transition-colors duration-200"
-          :class="{
-            'text-text-muted': stageState(i) === 'pending',
-            'text-text-primary': stageState(i) === 'active',
-            'text-text-secondary': stageState(i) === 'done',
-          }"
-        >
-          <span class="flex h-4 w-4 items-center justify-center" aria-hidden="true">
-            <svg
-              v-if="stageState(i) === 'done'"
-              viewBox="0 0 16 16"
-              class="h-3.5 w-3.5 text-accent"
-            >
-              <path
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                d="M3 8.5 6.5 12 13 4.5"
-              />
-            </svg>
-            <span
-              v-else-if="stageState(i) === 'active'"
-              class="h-2 w-2 animate-pulse rounded-full bg-accent"
-            />
-            <span v-else class="h-1.5 w-1.5 rounded-full bg-border-strong" />
-          </span>
-          <span class="flex-1">{{ s.label }}</span>
-          <span
-            v-if="s.id === 'reading-packets' && stageState(i) === 'active'"
-            class="text-xs tabular-nums text-text-muted"
-            >{{ progressPct }}%</span
-          >
-        </li>
-      </ol>
-
-      <div class="h-0.5 w-full overflow-hidden rounded-full bg-bg-elevated">
-        <div
-          class="h-full rounded-full bg-accent transition-all duration-200"
-          :style="{
-            width:
-              currentStageIndex <= 0
-                ? progressPct * 0.6 + '%'
-                : 60 + (currentStageIndex / (IMPORT_STAGES.length - 1)) * 40 + '%',
-          }"
-        />
-      </div>
-    </div>
-
-    <!-- Idle: drop target -->
-    <div v-else class="flex flex-col items-center gap-8">
+    <div class="flex flex-col items-center gap-8">
       <div class="flex flex-col items-center gap-2 text-center">
         <h1 class="text-2xl font-semibold tracking-tight text-text-primary">purdungeon</h1>
         <p class="text-sm text-text-secondary">See the OT network inside a packet capture.</p>
@@ -130,10 +59,6 @@ async function openFilePicker() {
           Choose files
         </button>
       </div>
-
-      <p v-if="appStore.error" class="max-w-sm text-center text-sm text-alert">
-        {{ appStore.error }}
-      </p>
     </div>
   </div>
 </template>

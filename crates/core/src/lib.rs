@@ -104,6 +104,11 @@ impl Session {
         self.with_conn(|c| store::queries::save_node_position(c, host_id, x, y))
     }
 
+    /// Saved (host_id, x, y) canvas positions for nodes the user has moved.
+    pub fn node_positions(&self) -> Result<Vec<(i64, f64, f64)>, CoreError> {
+        self.with_conn(store::queries::get_node_positions)
+    }
+
     pub fn findings(&self) -> Result<Vec<Finding>, CoreError> {
         self.with_conn(store::queries::get_findings)
     }

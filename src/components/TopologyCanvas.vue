@@ -161,27 +161,36 @@ function updateStyles() {
     updateNodeGroup(group, node, node.host.id === topology.selectedNodeId, state)
   }
 
+  const matchedLinks = topology.matchedLinkKeys
   for (const link of topology.links) {
     const line = linkLines.get(link.key)
     if (!line) continue
     updateLinkLine(line, link, link.key === topology.selectedLinkKey)
+    // updateLinkLine set a base opacity; a finding or search may override it.
+    let opacity: number | null = null
     if (finding && findingConns.size > 0) {
-      const inFinding = link.edges.some((e) => findingConns.has(e.connection.id))
-      line.opacity(inFinding ? 1 : 0.06)
-      const badge = linkBadges.get(link.key)
-      if (badge) badge.opacity(inFinding ? 1 : 0.06)
-    } else {
-      const badge = linkBadges.get(link.key)
-      if (badge) badge.opacity(1)
+      opacity = link.edges.some((e) => findingConns.has(e.connection.id)) ? 1 : 0.06
+    } else if (searching) {
+      opacity = matchedLinks.has(link.key) ? 1 : 0.06
     }
+    if (opacity !== null) line.opacity(opacity)
+    const badge = linkBadges.get(link.key)
+    if (badge) badge.opacity(opacity ?? 1)
   }
 
   mainLayer.value?.batchDraw()
 }
 
+// The findings panel (w-80) overlays the canvas on the left; frame content into
+// the clear area beside it. It's open when a capture first lands.
+const FINDINGS_PANEL_WIDTH = 320
+
 function fitView() {
   const { minX, maxX, height } = contentBounds()
-  fitToContent({ x: minX - 80, y: -40, width: maxX - minX + 160, height: height + 80 })
+  fitToContent(
+    { x: minX - 80, y: -40, width: maxX - minX + 160, height: height + 80 },
+    FINDINGS_PANEL_WIDTH,
+  )
 }
 
 // The canvas mounts after the capture is imported (v-if in App.vue), so the

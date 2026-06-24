@@ -39,6 +39,7 @@ pub fn run() {
             commands::query::get_connections,
             commands::query::get_time_range,
             commands::query::save_node_position,
+            commands::query::get_node_positions,
             commands::query::get_host_detail,
             commands::query::get_connection_packets,
             commands::query::set_role_override,

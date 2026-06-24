@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted } from 'vue'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
-import { useAppStore, IMPORT_STAGES } from '@/stores/app'
+import { useAppStore } from '@/stores/app'
 import { useTopologyStore } from '@/stores/topology'
 import { useTauri } from '@/composables/useTauri'
 import FileDropZone from '@/components/FileDropZone.vue'
@@ -15,6 +15,7 @@ import SearchBar from '@/components/SearchBar.vue'
 import FilterBar from '@/components/FilterBar.vue'
 import FindingsPanel from '@/components/FindingsPanel.vue'
 import LevelLegend from '@/components/LevelLegend.vue'
+import LoadingOverlay from '@/components/LoadingOverlay.vue'
 
 const appStore = useAppStore()
 const topology = useTopologyStore()
@@ -28,10 +29,6 @@ const panelOpen = computed(
     topology.selectedLinkKey !== null,
 )
 
-// Label for the in-progress stage, shown in the append overlay.
-const stageLabel = computed(
-  () => IMPORT_STAGES.find((s) => s.id === appStore.stage)?.label ?? 'Reading packets',
-)
 
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
@@ -99,20 +96,10 @@ onUnmounted(() => {
           Drop to add to this network
         </div>
       </div>
-
-      <!-- Stitching a capture into the open session -->
-      <div
-        v-if="appStore.loading"
-        class="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-bg-primary/70 backdrop-blur-sm"
-      >
-        <div
-          class="flex items-center gap-3 rounded-2xl border border-border bg-bg-secondary px-6 py-4 text-sm text-text-primary"
-        >
-          <span class="h-2 w-2 animate-pulse rounded-full bg-accent" />
-          <span>{{ stageLabel }}</span>
-        </div>
-      </div>
     </template>
     <FileDropZone v-else />
+
+    <!-- Import progress / errors, over either the drop screen or a loaded view -->
+    <LoadingOverlay v-if="appStore.loading || appStore.error" />
   </div>
 </template>

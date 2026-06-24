@@ -37,6 +37,12 @@ pub fn save_node_position(
 
 #[allow(clippy::needless_pass_by_value)]
 #[tauri::command]
+pub fn get_node_positions(state: State<'_, AppState>) -> Result<Vec<(i64, f64, f64)>, CoreError> {
+    state.with_session(Session::node_positions)
+}
+
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
 pub fn get_host_detail(
     host_id: i64,
     state: State<'_, AppState>,

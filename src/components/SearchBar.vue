@@ -52,22 +52,32 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown, true))
             ref="inputRef"
             v-model="query"
             type="text"
-            placeholder="Search by IP, MAC, vendor, protocol…"
+            placeholder="IP, MAC, vendor, protocol (tcp, modbus), or subnet (10.0.0.0/24)…"
             class="flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-muted"
           />
           <kbd class="rounded border border-border px-1.5 py-0.5 text-xs text-text-muted">Esc</kbd>
         </div>
         <div
-          v-if="query && topology.matchedNodeIds.size > 0"
+          v-if="query && (topology.matchedNodeIds.size > 0 || topology.matchedLinkKeys.size > 0)"
           class="border-t border-border px-4 py-2 text-xs text-text-secondary"
         >
-          {{ topology.matchedNodeIds.size }} match{{
-            topology.matchedNodeIds.size === 1 ? '' : 'es'
-          }}
+          <span v-if="topology.matchedNodeIds.size > 0"
+            >{{ topology.matchedNodeIds.size }} asset{{
+              topology.matchedNodeIds.size === 1 ? '' : 's'
+            }}</span
+          >
+          <span v-if="topology.matchedNodeIds.size > 0 && topology.matchedLinkKeys.size > 0">
+            · </span
+          >
+          <span v-if="topology.matchedLinkKeys.size > 0"
+            >{{ topology.matchedLinkKeys.size }} link{{
+              topology.matchedLinkKeys.size === 1 ? '' : 's'
+            }}</span
+          >
           highlighted
         </div>
         <div
-          v-else-if="query && topology.matchedNodeIds.size === 0"
+          v-else-if="query"
           class="border-t border-border px-4 py-2 text-xs text-text-muted"
         >
           No matches

@@ -59,6 +59,10 @@ export function useTauri() {
     return invoke<void>('save_node_position', { hostId, x, y })
   }
 
+  async function getNodePositions(): Promise<[number, number, number][]> {
+    return invoke<[number, number, number][]>('get_node_positions')
+  }
+
   async function getHostDetail(hostId: number): Promise<HostDetail> {
     return invoke<HostDetail>('get_host_detail', { hostId })
   }
@@ -92,7 +96,12 @@ export function useTauri() {
    * file into the current one. Either way the graph is rebuilt from the
    * (possibly merged) session.
    */
-  async function loadFile(path: string, mode: 'replace' | 'append' = 'replace') {
+  async function loadFile(
+    path: string,
+    mode: 'replace' | 'append' = 'replace',
+    fileIndex = 1,
+    fileCount = 1,
+  ) {
     const appStore = useAppStore()
     const topologyStore = useTopologyStore()
     const timelineStore = useTimelineStore()
@@ -102,7 +111,7 @@ export function useTauri() {
       return
     }
 
-    appStore.setLoading(true)
+    appStore.startLoading(fileIndex, fileCount)
     const unlistenProgress = await listen<{ bytes_done: number; bytes_total: number }>(
       'import-progress',
       (event) => {
@@ -114,6 +123,7 @@ export function useTauri() {
     const unlistenStage = await listen<ImportStage>('import-stage', (event) => {
       appStore.setStage(event.payload)
     })
+    let ok = false
     try {
       const result = mode === 'append' ? await addPcap(path) : await importPcap(path)
       if (result.packet_count === 0) {
@@ -125,32 +135,37 @@ export function useTauri() {
           )
         } else {
           appStore.addSource(path, 0)
+          ok = true
         }
-        return
+      } else {
+        appStore.setStage('building-view')
+        const [hosts, connections, timeRange, findings, positions] = await Promise.all([
+          getHosts(),
+          getConnections(),
+          getTimeRange(),
+          getFindings(),
+          getNodePositions(),
+        ])
+        if (mode === 'replace') {
+          // Clear selection, filters, and findings left over from a previous capture
+          topologyStore.reset()
+        }
+        timelineStore.setFullRange(timeRange[0], timeRange[1])
+        topologyStore.buildGraph(hosts, connections, positions)
+        topologyStore.findings = findings
+        if (mode === 'replace') appStore.setLoadedFile(path, result.packet_count)
+        else appStore.addSource(path, result.packet_count)
+        ok = true
       }
-      appStore.setStage('building-view')
-      const [hosts, connections, timeRange, findings] = await Promise.all([
-        getHosts(),
-        getConnections(),
-        getTimeRange(),
-        getFindings(),
-      ])
-      if (mode === 'replace') {
-        // Clear selection, filters, and findings left over from a previous capture
-        topologyStore.reset()
-      }
-      timelineStore.setFullRange(timeRange[0], timeRange[1])
-      topologyStore.buildGraph(hosts, connections)
-      topologyStore.findings = findings
-      if (mode === 'replace') appStore.setLoadedFile(path, result.packet_count)
-      else appStore.addSource(path, result.packet_count)
     } catch (e) {
       appStore.setError(humanizeError(e instanceof Error ? e.message : String(e)))
     } finally {
       unlistenProgress()
       unlistenStage()
-      appStore.setLoading(false)
     }
+    // Drain the step animation to the end (honouring each step's minimum screen
+    // time) before the overlay closes. On error the overlay stays for the ack.
+    if (ok) await appStore.finishLoading()
   }
 
   /**
@@ -167,7 +182,7 @@ export function useTauri() {
     }
     for (let i = 0; i < captures.length; i++) {
       const mode = i === 0 && appStore.loadedFile === null ? 'replace' : 'append'
-      await loadFile(captures[i], mode)
+      await loadFile(captures[i], mode, i + 1, captures.length)
       if (appStore.error) break
     }
   }
@@ -179,6 +194,7 @@ export function useTauri() {
     getConnections,
     getTimeRange,
     saveNodePosition,
+    getNodePositions,
     getHostDetail,
     getConnectionPackets,
     getFindings,

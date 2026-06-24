@@ -171,6 +171,16 @@ pub fn save_node_position(
     Ok(())
 }
 
+pub fn get_node_positions(conn: &Connection) -> Result<Vec<(i64, f64, f64)>, CoreError> {
+    let mut stmt = conn.prepare("SELECT host_id, x, y FROM node_positions")?;
+    let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+    let mut positions = Vec::new();
+    for row in rows {
+        positions.push(row?);
+    }
+    Ok(positions)
+}
+
 pub fn get_host_detail(conn: &Connection, host_id: i64) -> Result<HostDetail, CoreError> {
     let host = conn.query_row(
         &format!("SELECT {HOST_COLUMNS} FROM hosts WHERE id = ?1"),
