@@ -1,7 +1,7 @@
 {
-  "productName": "coil-sniffer",
+  "productName": "purdungeon",
   "version": "0.1.0",
-  "identifier": "com.coilsniffer.app",
+  "identifier": "com.purdungeon.app",
   "build": {
     "beforeDevCommand": "pnpm dev:vite",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
     "withGlobalTauri": false,
     "windows": [
       {
-        "title": "coil-sniffer",
+        "title": "purdungeon",
         "width": 1280,
         "height": 800,
         "minWidth": 800,

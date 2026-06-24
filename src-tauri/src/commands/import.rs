@@ -2,8 +2,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use coil_core::types::{ImportResult, ImportStage};
-use coil_core::{CoreError, Session};
+use purdungeon_core::types::{ImportResult, ImportStage};
+use purdungeon_core::{CoreError, Session};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 

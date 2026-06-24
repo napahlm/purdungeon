@@ -26,7 +26,7 @@ export function isCaptureFile(path: string): boolean {
 function humanizeError(raw: string): string {
   const msg = raw.toLowerCase()
   if (msg.includes('file too small') || msg.includes('reader') || msg.includes('parse error')) {
-    return "This file doesn't look like a packet capture. coil-sniffer reads .pcap and .pcapng files."
+    return "This file doesn't look like a packet capture. purdungeon reads .pcap and .pcapng files."
   }
   if (msg.includes('io error') || msg.includes('no such file') || msg.includes('os error')) {
     return "Couldn't open that file. Check that it still exists and is readable."
@@ -109,7 +109,7 @@ export function useTauri() {
       const result = await importPcap(path)
       if (result.packet_count === 0) {
         appStore.setError(
-          'No readable network traffic in this capture. coil-sniffer currently reads IPv4 over Ethernet.',
+          'No readable network traffic in this capture. purdungeon currently reads IPv4 over Ethernet.',
         )
         return
       }

@@ -2,7 +2,7 @@ mod commands;
 
 use std::sync::Mutex;
 
-use coil_core::{CoreError, Session};
+use purdungeon_core::{CoreError, Session};
 
 pub struct AppState {
     pub session: Mutex<Option<Session>>,
@@ -45,5 +45,5 @@ pub fn run() {
             commands::query::get_findings,
         ])
         .run(tauri::generate_context!())
-        .expect("failed to run coil-sniffer");
+        .expect("failed to run purdungeon");
 }

@@ -1,10 +1,10 @@
 [package]
-name = "coil-core"
+name = "purdungeon-core"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "coil_core"
+name = "purdungeon_core"
 
 [lints]
 workspace = true

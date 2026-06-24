@@ -1,4 +1,4 @@
-# coil-sniffer
+# purdungeon
 
 Offline desktop tool for OT/ICS network analysis. Drop a packet capture on the window and see the OT network inside it: every device, its likely role, where it sits in the Purdue model, who it talks to, and which of those conversations deserve a closer look. Think of it as a modern, open-source take on GrassMarlin.
 
@@ -55,7 +55,7 @@ pnpm dev
 | `pnpm dev` | Start dev mode (hot reload frontend + Rust backend) |
 | `pnpm build` | Build release binary and installers |
 | `pnpm lint` | Run eslint on the frontend |
-| `cargo test -p coil-core` | Test the analysis core headless |
+| `cargo test -p purdungeon-core` | Test the analysis core headless |
 
 ## License
 

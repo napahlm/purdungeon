@@ -5,7 +5,7 @@ use rusqlite::Connection;
 use crate::CoreError;
 
 pub fn init_db() -> Result<(Connection, PathBuf), CoreError> {
-    let db_path = std::env::temp_dir().join(format!("coil-sniffer-{}.db", uuid::Uuid::new_v4()));
+    let db_path = std::env::temp_dir().join(format!("purdungeon-{}.db", uuid::Uuid::new_v4()));
     let conn = Connection::open(&db_path)?;
 
     conn.execute_batch("PRAGMA journal_mode=WAL;")?;

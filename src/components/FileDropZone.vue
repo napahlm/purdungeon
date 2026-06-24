@@ -98,7 +98,7 @@ async function openFilePicker() {
     <!-- Idle: drop target -->
     <div v-else class="flex flex-col items-center gap-8">
       <div class="flex flex-col items-center gap-2 text-center">
-        <h1 class="text-2xl font-semibold tracking-tight text-text-primary">coil-sniffer</h1>
+        <h1 class="text-2xl font-semibold tracking-tight text-text-primary">purdungeon</h1>
         <p class="text-sm text-text-secondary">See the OT network inside a packet capture.</p>
       </div>
 

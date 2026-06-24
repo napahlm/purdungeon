@@ -36,7 +36,7 @@ function closeCapture() {
     class="flex h-11 shrink-0 items-center justify-between border-b border-border bg-bg-secondary px-4"
   >
     <div class="flex items-baseline gap-4">
-      <span class="text-sm font-semibold tracking-tight text-text-primary">coil-sniffer</span>
+      <span class="text-sm font-semibold tracking-tight text-text-primary">purdungeon</span>
       <span v-if="appStore.loadedFile" class="text-xs text-text-muted">
         {{ fileName(appStore.loadedFile) }}
         <span class="mx-1.5 text-border-strong">·</span>

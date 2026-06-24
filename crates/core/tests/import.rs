@@ -3,7 +3,7 @@
 
 use std::sync::atomic::AtomicU64;
 
-use coil_core::Session;
+use purdungeon_core::Session;
 
 const SCADA_MAC: [u8; 6] = [0x00, 0x0c, 0x29, 0x11, 0x22, 0x33];
 // 00:1b:1b is a Siemens prefix in the bundled OUI table
@@ -105,7 +105,7 @@ fn polling_capture() -> Vec<(f64, Vec<u8>)> {
 fn import_discovers_roles_and_modbus_activity() {
     let pcap = write_pcap(&polling_capture());
     let dir = std::env::temp_dir();
-    let path = dir.join(format!("coil-test-{}.pcap", std::process::id()));
+    let path = dir.join(format!("purdungeon-test-{}.pcap", std::process::id()));
     std::fs::write(&path, &pcap).unwrap();
 
     let progress = AtomicU64::new(0);

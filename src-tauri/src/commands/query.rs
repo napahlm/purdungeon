@@ -1,7 +1,7 @@
-use coil_core::types::{
+use purdungeon_core::types::{
     Connection, Finding, Host, HostDetail, ModbusConversation, ModbusHostActivity, Packet,
 };
-use coil_core::{CoreError, Session};
+use purdungeon_core::{CoreError, Session};
 use tauri::State;
 
 use crate::AppState;
