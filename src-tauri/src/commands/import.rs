@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -15,7 +15,62 @@ struct ImportProgress {
     bytes_total: u64,
 }
 
-#[allow(clippy::needless_pass_by_value)]
+/// Run a parse job on the blocking pool while a reporter task emits
+/// `import-progress` every 150 ms. The reporter is stopped by an explicit
+/// signal — success or failure — so a failed import never leaves it spinning.
+async fn run_import<R: Send + 'static>(
+    app: &AppHandle,
+    path: &Path,
+    work: impl FnOnce(&AtomicU64, &(dyn Fn(ImportStage) + Send + Sync)) -> Result<R, CoreError>
+        + Send
+        + 'static,
+) -> Result<R, CoreError> {
+    let file_size = std::fs::metadata(path)?.len();
+    let progress = Arc::new(AtomicU64::new(0));
+
+    let (done_tx, mut done_rx) = tokio::sync::oneshot::channel::<()>();
+    let progress_for_reporter = Arc::clone(&progress);
+    let app_for_reporter = app.clone();
+    let reporter = tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = &mut done_rx => break,
+                () = tokio::time::sleep(std::time::Duration::from_millis(150)) => {
+                    let done = progress_for_reporter.load(Ordering::Relaxed);
+                    let _ = app_for_reporter.emit("import-progress", ImportProgress {
+                        bytes_done: done,
+                        bytes_total: file_size,
+                    });
+                }
+            }
+        }
+    });
+
+    let progress_for_parser = Arc::clone(&progress);
+    let app_for_stages = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let on_stage = move |stage: ImportStage| {
+            let _ = app_for_stages.emit("import-stage", stage);
+        };
+        work(&progress_for_parser, &on_stage)
+    })
+    .await
+    .map_err(|e| CoreError::Internal(format!("task join: {e}")))?;
+
+    let _ = done_tx.send(());
+    let _ = reporter.await;
+    if result.is_ok() {
+        let _ = app.emit(
+            "import-progress",
+            ImportProgress {
+                bytes_done: file_size,
+                bytes_total: file_size,
+            },
+        );
+    }
+    result
+}
+
 #[tauri::command]
 pub async fn import_pcap(
     path: String,
@@ -32,44 +87,11 @@ pub async fn import_pcap(
     }
 
     let pcap_path = PathBuf::from(&path);
-    let progress = Arc::new(AtomicU64::new(0));
-    let file_size = std::fs::metadata(&pcap_path)?.len();
-
-    // Spawn progress reporter
-    let progress_clone = Arc::clone(&progress);
-    let app_clone = app.clone();
-    let progress_task = tauri::async_runtime::spawn(async move {
-        loop {
-            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-            let done = progress_clone.load(Ordering::Relaxed);
-            let _ = app_clone.emit("import-progress", ImportProgress {
-                bytes_done: done,
-                bytes_total: file_size,
-            });
-            if done >= file_size {
-                break;
-            }
-        }
-    });
-
-    let progress_for_parser = Arc::clone(&progress);
-    let app_for_stages = app.clone();
-    let (session, import_result) = tauri::async_runtime::spawn_blocking(move || {
-        let on_stage = move |stage: ImportStage| {
-            let _ = app_for_stages.emit("import-stage", stage);
-        };
-        Session::import(&pcap_path, &progress_for_parser, &on_stage)
+    let parse_path = pcap_path.clone();
+    let (session, import_result) = run_import(&app, &pcap_path, move |progress, on_stage| {
+        Session::import(&parse_path, progress, on_stage)
     })
-    .await
-    .map_err(|e| CoreError::Internal(format!("task join: {e}")))??;
-
-    // Signal completion and stop progress reporter
-    progress.store(file_size, Ordering::Relaxed);
-    let _ = app.emit("import-progress", ImportProgress {
-        bytes_done: file_size,
-        bytes_total: file_size,
-    });
-    let _ = progress_task.await;
+    .await?;
 
     let mut lock = state
         .session
@@ -83,7 +105,6 @@ pub async fn import_pcap(
 /// Merge another capture into the loaded session. Unlike `import_pcap`, this
 /// keeps the current session and adds to it, then re-derives roles and findings
 /// over the combined dataset.
-#[allow(clippy::needless_pass_by_value)]
 #[tauri::command]
 pub async fn add_pcap(
     path: String,
@@ -91,52 +112,17 @@ pub async fn add_pcap(
     app: AppHandle,
 ) -> Result<ImportResult, CoreError> {
     let pcap_path = PathBuf::from(&path);
-    let progress = Arc::new(AtomicU64::new(0));
-    let file_size = std::fs::metadata(&pcap_path)?.len();
-
-    // Spawn progress reporter
-    let progress_clone = Arc::clone(&progress);
-    let app_clone = app.clone();
-    let progress_task = tauri::async_runtime::spawn(async move {
-        loop {
-            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-            let done = progress_clone.load(Ordering::Relaxed);
-            let _ = app_clone.emit("import-progress", ImportProgress {
-                bytes_done: done,
-                bytes_total: file_size,
-            });
-            if done >= file_size {
-                break;
-            }
-        }
-    });
-
+    let parse_path = pcap_path.clone();
     // Hand a clone of the shared session to the blocking parse task.
     let session_arc = Arc::clone(&state.session);
-    let progress_for_parser = Arc::clone(&progress);
-    let app_for_stages = app.clone();
-    let import_result = tauri::async_runtime::spawn_blocking(move || {
-        let on_stage = move |stage: ImportStage| {
-            let _ = app_for_stages.emit("import-stage", stage);
-        };
+    run_import(&app, &pcap_path, move |progress, on_stage| {
         let guard = session_arc
             .lock()
             .map_err(|e| CoreError::Internal(e.to_string()))?;
         let session = guard
             .as_ref()
             .ok_or_else(|| CoreError::Internal("no capture loaded".into()))?;
-        session.add_capture(&pcap_path, &progress_for_parser, &on_stage)
+        session.add_capture(&parse_path, progress, on_stage)
     })
     .await
-    .map_err(|e| CoreError::Internal(format!("task join: {e}")))??;
-
-    // Signal completion and stop progress reporter
-    progress.store(file_size, Ordering::Relaxed);
-    let _ = app.emit("import-progress", ImportProgress {
-        bytes_done: file_size,
-        bytes_total: file_size,
-    });
-    let _ = progress_task.await;
-
-    Ok(import_result)
 }
