@@ -4,6 +4,10 @@ import { useTopologyStore } from '@/stores/topology'
 import { effectiveRole, ROLE_LABELS, type Host } from '@/types/network'
 import { PROTO_FAMILY_LABELS, PROTO_COLORS, type ProtoFamily } from '@/canvas/palette'
 import { formatBytes, formatTime } from '@/utils/format'
+import DetailPanel from './ui/DetailPanel.vue'
+import PanelSection from './ui/PanelSection.vue'
+import DetailRow from './ui/DetailRow.vue'
+import CrossZoneBadge from './ui/CrossZoneBadge.vue'
 
 const topology = useTopologyStore()
 
@@ -65,9 +69,8 @@ function close() {
 </script>
 
 <template>
-  <div class="flex h-full w-86 shrink-0 flex-col border-l border-border bg-bg-secondary">
-    <!-- Header -->
-    <div class="flex items-center justify-between border-b border-border px-4 py-3">
+  <DetailPanel @close="close">
+    <template #header>
       <div class="flex items-center gap-2.5">
         <span
           v-if="link"
@@ -75,65 +78,64 @@ function close() {
           :style="{ backgroundColor: link.color }"
         />
         <h2 class="text-sm font-semibold text-text-primary">Link</h2>
-        <span
-          v-if="link?.crossZone"
-          class="rounded bg-alert/15 px-1.5 py-0.5 text-xs font-medium text-alert"
-          >cross-zone</span
-        >
+        <CrossZoneBadge v-if="link?.crossZone" />
       </div>
-      <button
-        class="rounded p-1 text-text-muted transition-colors hover:text-text-primary"
-        aria-label="Close panel"
-        @click="close"
-      >
-        <svg viewBox="0 0 16 16" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.8">
-          <path d="M3 3l10 10M13 3L3 13" stroke-linecap="round" />
-        </svg>
-      </button>
-    </div>
+    </template>
 
     <div v-if="link" class="flex-1 overflow-y-auto">
-      <!-- Endpoints -->
-      <div class="border-b border-border px-4 py-3">
+      <PanelSection>
         <div class="space-y-1 text-sm">
           <button
             class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-bg-elevated"
             @click="openHost(link.source.host.id)"
           >
-            <span class="flex-1 font-mono text-text-primary">{{ link.source.host.ip_address }}</span>
+            <span class="flex-1 font-mono text-text-primary">{{
+              link.source.host.ip_address
+            }}</span>
             <span class="text-xs text-text-muted">{{ endpointLabel(link.source.host) }}</span>
           </button>
-          <div class="pl-2 text-xs text-text-muted">↕ {{ link.conversationCount }} conversations</div>
+          <div class="flex items-center gap-1 pl-2 text-xs text-text-muted">
+            <svg
+              viewBox="0 0 16 16"
+              class="h-3 w-3"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+            >
+              <path
+                d="M8 2.5v11M4.5 6L8 2.5 11.5 6M4.5 10L8 13.5 11.5 10"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+            {{ link.conversationCount }} conversations
+          </div>
           <button
             class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-bg-elevated"
             @click="openHost(link.target.host.id)"
           >
-            <span class="flex-1 font-mono text-text-primary">{{ link.target.host.ip_address }}</span>
+            <span class="flex-1 font-mono text-text-primary">{{
+              link.target.host.ip_address
+            }}</span>
             <span class="text-xs text-text-muted">{{ endpointLabel(link.target.host) }}</span>
           </button>
         </div>
-      </div>
+      </PanelSection>
 
-      <!-- Aggregate traffic -->
-      <div class="border-b border-border px-4 py-3">
-        <div class="mb-2 text-xs font-medium uppercase tracking-wider text-text-muted">Traffic</div>
+      <PanelSection label="Traffic">
         <div class="space-y-1.5 text-sm">
-          <div class="flex justify-between">
-            <span class="text-text-secondary">Packets</span>
-            <span class="text-text-primary">{{ aggregate.packets.toLocaleString() }}</span>
-          </div>
-          <div class="flex justify-between">
-            <span class="text-text-secondary">Bytes</span>
-            <span class="text-text-primary">{{ formatBytes(aggregate.bytes) }}</span>
-          </div>
-          <div class="flex justify-between">
-            <span class="text-text-secondary">First seen</span>
-            <span class="text-text-primary">{{ formatTime(aggregate.firstSeen) }}</span>
-          </div>
-          <div class="flex justify-between">
-            <span class="text-text-secondary">Last seen</span>
-            <span class="text-text-primary">{{ formatTime(aggregate.lastSeen) }}</span>
-          </div>
+          <DetailRow label="Packets">
+            {{ aggregate.packets.toLocaleString() }}
+          </DetailRow>
+          <DetailRow label="Bytes">
+            {{ formatBytes(aggregate.bytes) }}
+          </DetailRow>
+          <DetailRow label="First seen">
+            {{ formatTime(aggregate.firstSeen) }}
+          </DetailRow>
+          <DetailRow label="Last seen">
+            {{ formatTime(aggregate.lastSeen) }}
+          </DetailRow>
           <div class="flex items-center justify-between gap-3 pt-0.5">
             <span class="text-text-secondary">Protocols</span>
             <span class="flex flex-wrap justify-end gap-1.5">
@@ -151,13 +153,9 @@ function close() {
             </span>
           </div>
         </div>
-      </div>
+      </PanelSection>
 
-      <!-- Conversations -->
-      <div class="px-4 py-3">
-        <div class="mb-2 text-xs font-medium uppercase tracking-wider text-text-muted">
-          Conversations ({{ conversations.length }})
-        </div>
+      <PanelSection :label="`Conversations (${conversations.length})`" :divider="false">
         <div class="space-y-0.5">
           <button
             v-for="edge in conversations"
@@ -180,7 +178,7 @@ function close() {
             }}</span>
           </button>
         </div>
-      </div>
+      </PanelSection>
     </div>
 
     <div
@@ -189,5 +187,5 @@ function close() {
     >
       No data for this link.
     </div>
-  </div>
+  </DetailPanel>
 </template>

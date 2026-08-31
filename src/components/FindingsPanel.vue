@@ -1,12 +1,16 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useTopologyStore } from '@/stores/topology'
+import { useAppStore } from '@/stores/app'
+import { FINDINGS_PANEL_WIDTH, FINDINGS_RAIL_WIDTH } from '@/ui/layout'
 
 const topology = useTopologyStore()
 
 // Open by default — it's the first thing to skim — but collapsible so it isn't
-// permanently in the way once you've read it.
-const collapsed = ref(false)
+// permanently in the way once you've read it. Lives in the app store so the
+// canvas can frame content into the space that's actually visible.
+const { findingsCollapsed: collapsed } = storeToRefs(useAppStore())
 
 const SEVERITY_ORDER = ['high', 'medium', 'info'] as const
 const SEVERITY_COLOR: Record<string, string> = {
@@ -28,16 +32,15 @@ const summary = computed(() =>
 )
 
 // Dot colour for the collapsed rail: the most severe thing present.
-const topSeverity = computed(
-  () => SEVERITY_ORDER.find((s) => counts.value[s] > 0) ?? 'info',
-)
+const topSeverity = computed(() => SEVERITY_ORDER.find((s) => counts.value[s] > 0) ?? 'info')
 </script>
 
 <template>
   <!-- Collapsed: a thin rail that reopens the panel -->
   <aside
     v-if="collapsed"
-    class="absolute inset-y-0 left-0 z-20 flex w-11 flex-col items-center border-r border-border bg-bg-secondary py-3"
+    class="absolute inset-y-0 left-0 z-20 flex flex-col items-center border-r border-border bg-bg-secondary py-3"
+    :style="{ width: FINDINGS_RAIL_WIDTH + 'px' }"
   >
     <button
       class="flex flex-col items-center gap-2 text-text-muted transition-colors hover:text-text-primary"
@@ -63,7 +66,8 @@ const topSeverity = computed(
 
   <aside
     v-else
-    class="absolute inset-y-0 left-0 z-20 flex w-80 flex-col border-r border-border bg-bg-secondary shadow-xl shadow-black/20"
+    class="absolute inset-y-0 left-0 z-20 flex flex-col border-r border-border bg-bg-secondary shadow-xl shadow-black/20"
+    :style="{ width: FINDINGS_PANEL_WIDTH + 'px' }"
   >
     <div class="flex items-start justify-between border-b border-border px-4 py-3">
       <div>
@@ -77,7 +81,13 @@ const topSeverity = computed(
         title="Collapse"
         @click="collapsed = true"
       >
-        <svg viewBox="0 0 16 16" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8">
+        <svg
+          viewBox="0 0 16 16"
+          class="h-4 w-4"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+        >
           <path d="M10 4L6 8l4 4" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
       </button>

@@ -4,6 +4,11 @@ import { useTopologyStore } from '@/stores/topology'
 import { useTauri } from '@/composables/useTauri'
 import type { ModbusConversation } from '@/types/network'
 import { formatBytes, formatTime, formatCadence } from '@/utils/format'
+import DetailPanel from './ui/DetailPanel.vue'
+import PanelSection from './ui/PanelSection.vue'
+import DetailRow from './ui/DetailRow.vue'
+import CrossZoneBadge from './ui/CrossZoneBadge.vue'
+import WriteBadge from './ui/WriteBadge.vue'
 
 const topology = useTopologyStore()
 const { getModbusConversation } = useTauri()
@@ -47,8 +52,9 @@ watch(
     try {
       const result = await getModbusConversation(edgeId)
       if (seq === requestSeq) modbus.value = result
-    } catch {
+    } catch (e) {
       // Traffic stats still show; only the Modbus depth is unavailable.
+      console.error('modbus conversation unavailable', e)
     } finally {
       if (seq === requestSeq) loading.value = false
     }
@@ -66,9 +72,8 @@ function openHost(hostId: number) {
 </script>
 
 <template>
-  <div class="flex h-full w-86 shrink-0 flex-col border-l border-border bg-bg-secondary">
-    <!-- Header -->
-    <div class="flex items-center justify-between border-b border-border px-4 py-3">
+  <DetailPanel @close="close">
+    <template #header>
       <div class="flex items-center gap-2.5">
         <span
           v-if="edge"
@@ -76,32 +81,12 @@ function openHost(hostId: number) {
           :style="{ backgroundColor: edge.color }"
         />
         <h2 class="text-sm font-semibold text-text-primary">Conversation</h2>
-        <span
-          v-if="edge?.crossZone"
-          class="rounded bg-alert/15 px-1.5 py-0.5 text-xs font-medium text-alert"
-          >cross-zone</span
-        >
+        <CrossZoneBadge v-if="edge?.crossZone" />
       </div>
-      <button
-        class="rounded p-1 text-text-muted transition-colors hover:text-text-primary"
-        aria-label="Close panel"
-        @click="close"
-      >
-        <svg
-          viewBox="0 0 16 16"
-          class="h-3.5 w-3.5"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.8"
-        >
-          <path d="M3 3l10 10M13 3L3 13" stroke-linecap="round" />
-        </svg>
-      </button>
-    </div>
+    </template>
 
     <div v-if="connection" class="flex-1 overflow-y-auto">
-      <!-- Endpoints -->
-      <div class="border-b border-border px-4 py-3">
+      <PanelSection>
         <div class="space-y-1 text-sm">
           <button
             v-if="srcHost"
@@ -111,8 +96,21 @@ function openHost(hostId: number) {
             <span class="flex-1 font-mono text-text-primary">{{ srcHost.ip_address }}</span>
             <span class="font-mono text-xs text-text-muted">:{{ connection.src_port }}</span>
           </button>
-          <div class="pl-2 text-xs text-text-muted">
-            ↓ {{ connection.app_protocol ?? connection.protocol.toLowerCase() }}
+          <div class="flex items-center gap-1 pl-2 text-xs text-text-muted">
+            <svg
+              viewBox="0 0 16 16"
+              class="h-3 w-3"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+            >
+              <path
+                d="M8 3v10M4.5 9.5L8 13l3.5-3.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+            {{ connection.app_protocol ?? connection.protocol.toLowerCase() }}
           </div>
           <button
             v-if="dstHost"
@@ -123,60 +121,43 @@ function openHost(hostId: number) {
             <span class="font-mono text-xs text-text-muted">:{{ connection.dst_port }}</span>
           </button>
         </div>
-      </div>
+      </PanelSection>
 
-      <!-- Traffic -->
-      <div class="border-b border-border px-4 py-3">
-        <div class="mb-2 text-xs font-medium uppercase tracking-wider text-text-muted">Traffic</div>
+      <PanelSection label="Traffic">
         <div class="space-y-1.5 text-sm">
-          <div class="flex justify-between">
-            <span class="text-text-secondary">Packets</span>
-            <span class="text-text-primary">{{ connection.packet_count.toLocaleString() }}</span>
-          </div>
-          <div class="flex justify-between">
-            <span class="text-text-secondary">Bytes</span>
-            <span class="text-text-primary">{{ formatBytes(connection.byte_count) }}</span>
-          </div>
-          <div class="flex justify-between">
-            <span class="text-text-secondary">First seen</span>
-            <span class="text-text-primary">{{ formatTime(connection.first_seen) }}</span>
-          </div>
-          <div class="flex justify-between">
-            <span class="text-text-secondary">Last seen</span>
-            <span class="text-text-primary">{{ formatTime(connection.last_seen) }}</span>
-          </div>
+          <DetailRow label="Packets">
+            {{ connection.packet_count.toLocaleString() }}
+          </DetailRow>
+          <DetailRow label="Bytes">
+            {{ formatBytes(connection.byte_count) }}
+          </DetailRow>
+          <DetailRow label="First seen">
+            {{ formatTime(connection.first_seen) }}
+          </DetailRow>
+          <DetailRow label="Last seen">
+            {{ formatTime(connection.last_seen) }}
+          </DetailRow>
         </div>
-      </div>
+      </PanelSection>
 
-      <!-- Modbus -->
       <div v-if="loading" class="px-4 py-3 text-sm text-text-muted">Loading Modbus detail…</div>
-      <div v-else-if="modbus" class="px-4 py-3">
-        <div class="mb-2 text-xs font-medium uppercase tracking-wider text-text-muted">Modbus</div>
-
+      <PanelSection v-else-if="modbus" label="Modbus" :divider="false">
         <div class="space-y-1.5 text-sm">
-          <div class="flex justify-between">
-            <span class="text-text-secondary">Requests</span>
-            <span class="text-text-primary">{{ modbus.requests.toLocaleString() }}</span>
-          </div>
-          <div class="flex justify-between">
-            <span class="text-text-secondary">Reads / writes</span>
-            <span class="text-text-primary">
-              {{ modbus.reads.toLocaleString() }} /
-              <span :class="modbus.writes > 0 ? 'font-medium text-alert' : ''">
-                {{ modbus.writes.toLocaleString() }}
-              </span>
+          <DetailRow label="Requests">
+            {{ modbus.requests.toLocaleString() }}
+          </DetailRow>
+          <DetailRow label="Reads / writes">
+            {{ modbus.reads.toLocaleString() }} /
+            <span :class="modbus.writes > 0 ? 'font-medium text-alert' : ''">
+              {{ modbus.writes.toLocaleString() }}
             </span>
-          </div>
-          <div v-if="modbus.poll_interval_ms !== null" class="flex justify-between">
-            <span class="text-text-secondary">Polling cadence</span>
-            <span class="text-text-primary"
-              >every {{ formatCadence(modbus.poll_interval_ms) }}</span
-            >
-          </div>
-          <div v-if="modbus.unit_ids.length" class="flex justify-between">
-            <span class="text-text-secondary">Unit IDs</span>
-            <span class="font-mono text-text-primary">{{ modbus.unit_ids.join(', ') }}</span>
-          </div>
+          </DetailRow>
+          <DetailRow v-if="modbus.poll_interval_ms !== null" label="Polling cadence">
+            every {{ formatCadence(modbus.poll_interval_ms) }}
+          </DetailRow>
+          <DetailRow v-if="modbus.unit_ids.length" label="Unit IDs" mono>
+            {{ modbus.unit_ids.join(', ') }}
+          </DetailRow>
           <div v-if="modbus.exceptions > 0" class="flex justify-between">
             <span class="text-text-secondary">Exceptions</span>
             <span class="text-warn">{{ modbus.exceptions }}</span>
@@ -192,11 +173,7 @@ function openHost(hostId: number) {
               class="flex items-center justify-between text-xs"
             >
               <span class="flex items-center gap-1.5 text-text-primary">
-                <span
-                  v-if="fn.is_write"
-                  class="rounded bg-alert/15 px-1 py-px font-medium text-alert"
-                  >W</span
-                >
+                <WriteBadge v-if="fn.is_write" />
                 <span class="font-mono text-text-muted">{{
                   '0x' + fn.function_code.toString(16).padStart(2, '0')
                 }}</span>
@@ -206,7 +183,7 @@ function openHost(hostId: number) {
             </div>
           </div>
         </div>
-      </div>
+      </PanelSection>
     </div>
 
     <div
@@ -215,5 +192,5 @@ function openHost(hostId: number) {
     >
       No data for this conversation.
     </div>
-  </div>
+  </DetailPanel>
 </template>

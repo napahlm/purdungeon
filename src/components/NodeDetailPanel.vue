@@ -4,8 +4,13 @@ import { useTopologyStore } from '@/stores/topology'
 import { useTauri } from '@/composables/useTauri'
 import type { HostDetail, ModbusHostActivity, Role } from '@/types/network'
 import { ROLE_LABELS, ASSIGNABLE_ROLES, effectiveLevel } from '@/types/network'
-import { LEVEL_COLORS } from '@/canvas/palette'
+import { levelColorFor } from '@/canvas/palette'
 import { formatBytes, formatTime } from '@/utils/format'
+import DetailPanel from './ui/DetailPanel.vue'
+import PanelSection from './ui/PanelSection.vue'
+import DetailRow from './ui/DetailRow.vue'
+import SelectMenu from './ui/SelectMenu.vue'
+import WriteBadge from './ui/WriteBadge.vue'
 
 const topology = useTopologyStore()
 const { getHostDetail, getModbusHostActivity, setRoleOverride, setLevelOverride } = useTauri()
@@ -18,10 +23,30 @@ const error = ref<string | null>(null)
 const host = computed(() => detail.value?.host ?? null)
 const speaksModbus = computed(() => host.value?.protocols.includes('modbus') ?? false)
 
-const levelBadgeColor = computed(() => {
-  if (!host.value) return LEVEL_COLORS.unknown
-  const level = effectiveLevel(host.value)
-  return LEVEL_COLORS[level === null ? 'unknown' : String(level)]
+const levelBadgeColor = computed(() =>
+  host.value ? levelColorFor(effectiveLevel(host.value)) : levelColorFor(null),
+)
+
+const roleOptions = computed(() => {
+  if (!host.value) return []
+  const auto =
+    host.value.role !== 'unknown'
+      ? `Auto — ${ROLE_LABELS[host.value.role]} (${Math.round(host.value.role_confidence * 100)}%)`
+      : `Auto — ${ROLE_LABELS[host.value.role]}`
+  return [
+    { value: 'auto', label: auto },
+    ...ASSIGNABLE_ROLES.map((r) => ({ value: r, label: ROLE_LABELS[r] })),
+  ]
+})
+
+const levelOptions = computed(() => {
+  if (!host.value) return []
+  const auto =
+    host.value.purdue_level === null ? 'Auto — unplaced' : `Auto — Level ${host.value.purdue_level}`
+  return [
+    { value: 'auto', label: auto },
+    ...[0, 1, 2, 3, 4, 5].map((l) => ({ value: String(l), label: `Level ${l}` })),
+  ]
 })
 
 let requestSeq = 0
@@ -56,20 +81,29 @@ watch(
   { immediate: true },
 )
 
-async function onRoleChange(e: Event) {
+async function onRoleChange(value: string) {
   if (!host.value) return
-  const value = (e.target as HTMLSelectElement).value
   const role = value === 'auto' ? null : (value as Role)
-  await setRoleOverride(host.value.id, role)
+  try {
+    await setRoleOverride(host.value.id, role)
+  } catch (err) {
+    // The session didn't record it — don't update the view as if it had.
+    error.value = err instanceof Error ? err.message : String(err)
+    return
+  }
   host.value.role_override = role
   topology.refreshHost({ ...host.value })
 }
 
-async function onLevelChange(e: Event) {
+async function onLevelChange(value: string) {
   if (!host.value) return
-  const value = (e.target as HTMLSelectElement).value
   const level = value === 'auto' ? null : Number(value)
-  await setLevelOverride(host.value.id, level)
+  try {
+    await setLevelOverride(host.value.id, level)
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+    return
+  }
   host.value.level_override = level
   topology.refreshHost({ ...host.value })
 }
@@ -88,34 +122,18 @@ function close() {
 </script>
 
 <template>
-  <div class="flex h-full w-86 shrink-0 flex-col border-l border-border bg-bg-secondary">
-    <!-- Header -->
-    <div class="flex items-center justify-between border-b border-border px-4 py-3">
+  <DetailPanel @close="close">
+    <template #header>
       <div class="flex items-center gap-2.5">
         <span
           class="inline-block h-2.5 w-2.5 rounded-full"
           :style="{ backgroundColor: levelBadgeColor }"
         />
         <h2 class="font-mono text-sm font-semibold text-text-primary">
-          {{ host?.ip_address ?? 'Asset' }}
+          {{ host?.ip_address ?? 'Device' }}
         </h2>
       </div>
-      <button
-        class="rounded p-1 text-text-muted transition-colors hover:text-text-primary"
-        aria-label="Close panel"
-        @click="close"
-      >
-        <svg
-          viewBox="0 0 16 16"
-          class="h-3.5 w-3.5"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.8"
-        >
-          <path d="M3 3l10 10M13 3L3 13" stroke-linecap="round" />
-        </svg>
-      </button>
-    </div>
+    </template>
 
     <div v-if="loading" class="flex flex-1 items-center justify-center text-sm text-text-muted">
       Loading…
@@ -125,93 +143,62 @@ function close() {
       v-else-if="error"
       class="flex flex-1 items-center justify-center px-6 text-center text-sm text-text-muted"
     >
-      Couldn't load this asset: {{ error }}
+      Couldn’t load this device: {{ error }}
     </div>
 
     <div v-else-if="detail && host" class="flex-1 overflow-y-auto">
-      <!-- Classification -->
-      <div class="border-b border-border px-4 py-3">
-        <div class="mb-2 text-xs font-medium uppercase tracking-wider text-text-muted">
-          Classification
-        </div>
+      <PanelSection label="Classification">
         <div class="space-y-2 text-sm">
           <div class="flex items-center justify-between gap-2">
             <span class="text-text-secondary">Role</span>
-            <select
-              class="rounded-md border border-border bg-bg-elevated px-2 py-1 text-xs text-text-primary outline-none focus:border-accent"
-              :value="host.role_override ?? 'auto'"
-              @change="onRoleChange"
-            >
-              <option value="auto">
-                Auto — {{ ROLE_LABELS[host.role] }}
-                {{ host.role !== 'unknown' ? `(${Math.round(host.role_confidence * 100)}%)` : '' }}
-              </option>
-              <option v-for="r in ASSIGNABLE_ROLES" :key="r" :value="r">
-                {{ ROLE_LABELS[r] }}
-              </option>
-            </select>
+            <SelectMenu
+              :model-value="host.role_override ?? 'auto'"
+              :options="roleOptions"
+              @update:model-value="onRoleChange"
+            />
           </div>
           <div class="flex items-center justify-between gap-2">
             <span class="text-text-secondary">Purdue level</span>
-            <select
-              class="rounded-md border border-border bg-bg-elevated px-2 py-1 text-xs text-text-primary outline-none focus:border-accent"
-              :value="host.level_override ?? 'auto'"
-              @change="onLevelChange"
-            >
-              <option value="auto">
-                Auto — {{ host.purdue_level === null ? 'unplaced' : `Level ${host.purdue_level}` }}
-              </option>
-              <option v-for="l in [0, 1, 2, 3, 4, 5]" :key="l" :value="l">Level {{ l }}</option>
-            </select>
+            <SelectMenu
+              :model-value="host.level_override === null ? 'auto' : String(host.level_override)"
+              :options="levelOptions"
+              @update:model-value="onLevelChange"
+            />
           </div>
           <p v-if="host.role_evidence" class="text-xs leading-relaxed text-text-muted">
             {{ host.role_evidence }}
           </p>
         </div>
-      </div>
+      </PanelSection>
 
-      <!-- Identity -->
-      <div class="border-b border-border px-4 py-3">
-        <div class="mb-2 text-xs font-medium uppercase tracking-wider text-text-muted">
-          Identity
-        </div>
+      <PanelSection label="Identity">
         <div class="space-y-1.5 text-sm">
-          <div class="flex justify-between">
-            <span class="text-text-secondary">MAC</span>
-            <span class="font-mono text-text-primary">{{ host.mac_address || '—' }}</span>
-          </div>
-          <div class="flex justify-between">
-            <span class="text-text-secondary">Vendor</span>
-            <span class="text-text-primary">{{ host.vendor ?? '—' }}</span>
-          </div>
+          <DetailRow label="MAC" mono>
+            {{ host.mac_address || '—' }}
+          </DetailRow>
+          <DetailRow label="Vendor">
+            {{ host.vendor ?? '—' }}
+          </DetailRow>
           <div v-if="host.protocols" class="flex items-start justify-between gap-3">
             <span class="text-text-secondary">Protocols</span>
             <span class="text-right font-mono text-xs leading-relaxed text-text-primary">
               {{ host.protocols.split(',').join(' · ') }}
             </span>
           </div>
-          <div class="flex justify-between">
-            <span class="text-text-secondary">First seen</span>
-            <span class="text-text-primary">{{ formatTime(host.first_seen) }}</span>
-          </div>
-          <div class="flex justify-between">
-            <span class="text-text-secondary">Last seen</span>
-            <span class="text-text-primary">{{ formatTime(host.last_seen) }}</span>
-          </div>
-          <div class="flex justify-between">
-            <span class="text-text-secondary">Traffic</span>
-            <span class="text-text-primary">
-              {{ detail.total_packets.toLocaleString() }} packets ·
-              {{ formatBytes(detail.total_bytes) }}
-            </span>
-          </div>
+          <DetailRow label="First seen">
+            {{ formatTime(host.first_seen) }}
+          </DetailRow>
+          <DetailRow label="Last seen">
+            {{ formatTime(host.last_seen) }}
+          </DetailRow>
+          <DetailRow label="Traffic">
+            {{ detail.total_packets.toLocaleString() }} packets ·
+            {{ formatBytes(detail.total_bytes) }}
+          </DetailRow>
         </div>
-      </div>
+      </PanelSection>
 
-      <!-- Modbus -->
-      <div v-if="speaksModbus && modbus" class="border-b border-border px-4 py-3">
-        <div class="mb-2 text-xs font-medium uppercase tracking-wider text-text-muted">Modbus</div>
-
+      <PanelSection v-if="speaksModbus && modbus" label="Modbus">
         <div v-if="modbus.unit_ids_served.length" class="mb-2 flex justify-between text-sm">
           <span class="text-text-secondary">Unit IDs served</span>
           <span class="font-mono text-text-primary">{{ modbus.unit_ids_served.join(', ') }}</span>
@@ -236,11 +223,7 @@ function close() {
                 class="flex items-center justify-between text-xs"
               >
                 <span class="flex items-center gap-1.5 text-text-primary">
-                  <span
-                    v-if="fn.is_write"
-                    class="rounded bg-alert/15 px-1 py-px font-medium text-alert"
-                    >W</span
-                  >
+                  <WriteBadge v-if="fn.is_write" />
                   {{ fn.function_name }}
                 </span>
                 <span class="tabular-nums text-text-secondary">{{
@@ -296,13 +279,9 @@ function close() {
             </p>
           </div>
         </template>
-      </div>
+      </PanelSection>
 
-      <!-- Connections -->
-      <div class="px-4 py-3">
-        <div class="mb-2 text-xs font-medium uppercase tracking-wider text-text-muted">
-          Conversations ({{ detail.connections.length }})
-        </div>
+      <PanelSection :label="`Conversations (${detail.connections.length})`" :divider="false">
         <div class="space-y-0.5">
           <button
             v-for="conn in detail.connections"
@@ -310,9 +289,36 @@ function close() {
             class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-bg-elevated"
             @click="openEdge(conn.connection_id)"
           >
-            <span class="w-7 text-xs text-text-muted">{{
-              conn.direction === 'outbound' ? '→' : '←'
-            }}</span>
+            <span class="w-7 text-xs text-text-muted">
+              <svg
+                v-if="conn.direction === 'outbound'"
+                viewBox="0 0 16 16"
+                class="h-3 w-3"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+              >
+                <path
+                  d="M3 8h10M9.5 4.5L13 8l-3.5 3.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+              <svg
+                v-else
+                viewBox="0 0 16 16"
+                class="h-3 w-3"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+              >
+                <path
+                  d="M13 8H3M6.5 4.5L3 8l3.5 3.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </span>
             <span class="flex-1 truncate font-mono text-text-primary">{{ conn.peer_ip }}</span>
             <span class="text-xs text-text-muted">{{
               conn.app_protocol ?? conn.protocol.toLowerCase()
@@ -322,7 +328,7 @@ function close() {
             }}</span>
           </button>
         </div>
-      </div>
+      </PanelSection>
     </div>
-  </div>
+  </DetailPanel>
 </template>
