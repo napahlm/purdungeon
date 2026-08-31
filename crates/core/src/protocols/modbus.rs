@@ -6,7 +6,9 @@
 
 pub const MODBUS_PORT: u16 = 502;
 
-/// Function codes that modify coils or registers.
+/// Function codes that modify coils or registers. 0x17 (Read/Write Multiple
+/// Registers) also reads, but the write half is what matters for findings, so
+/// it counts as a write here and its read side goes untallied.
 const WRITE_FUNCTIONS: [u8; 6] = [0x05, 0x06, 0x0F, 0x10, 0x16, 0x17];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,7 +106,12 @@ pub fn parse_frames(payload: &[u8], is_request: bool) -> Vec<ModbusFrame> {
     frames
 }
 
-fn parse_pdu(pdu: &[u8], transaction_id: u16, unit_id: u8, is_request: bool) -> Option<ModbusFrame> {
+fn parse_pdu(
+    pdu: &[u8],
+    transaction_id: u16,
+    unit_id: u8,
+    is_request: bool,
+) -> Option<ModbusFrame> {
     let raw_code = *pdu.first()?;
     let is_exception = raw_code & 0x80 != 0;
     let function_code = raw_code & 0x7F;
@@ -126,9 +133,8 @@ fn parse_pdu(pdu: &[u8], transaction_id: u16, unit_id: u8, is_request: bool) -> 
         return Some(frame);
     }
 
-    let be16 = |i: usize| -> Option<u16> {
-        Some(u16::from_be_bytes([*body.get(i)?, *body.get(i + 1)?]))
-    };
+    let be16 =
+        |i: usize| -> Option<u16> { Some(u16::from_be_bytes([*body.get(i)?, *body.get(i + 1)?])) };
 
     match function_code {
         // Reads: request carries start + quantity, response only data

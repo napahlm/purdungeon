@@ -62,15 +62,24 @@ pub fn protocol_for_port(port: u16) -> Option<&'static str> {
 pub fn is_ot_protocol(name: &str) -> bool {
     matches!(
         name,
-        "modbus" | "s7comm" | "iec104" | "opcua" | "dnp3" | "enip" | "enip-io" | "bacnet" | "fins" | "fox" | "ff-annunc"
+        "modbus"
+            | "s7comm"
+            | "iec104"
+            | "opcua"
+            | "dnp3"
+            | "enip"
+            | "enip-io"
+            | "bacnet"
+            | "fins"
+            | "fox"
+            | "ff-annunc"
     )
 }
 
 /// Name untagged flows by their best-known port (server side wins).
 pub fn classify_connections(conn: &Connection) -> Result<(), CoreError> {
-    let mut stmt = conn.prepare(
-        "SELECT id, src_port, dst_port FROM connections WHERE app_protocol IS NULL",
-    )?;
+    let mut stmt =
+        conn.prepare("SELECT id, src_port, dst_port FROM connections WHERE app_protocol IS NULL")?;
     let rows: Vec<(i64, u16, u16)> = stmt
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
         .collect::<Result<Vec<_>, _>>()?;

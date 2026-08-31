@@ -105,15 +105,21 @@ pub fn host_activity(conn: &Connection, host_id: i64) -> Result<ModbusHostActivi
 
 /// Modbus view of the conversation behind one connection row, gathered for
 /// the host pair in both directions (requests travel on one flow, responses
-/// on the reverse one).
-pub fn conversation(conn: &Connection, connection_id: i64) -> Result<ModbusConversation, CoreError> {
+/// on the reverse one). Deliberately ignores ports: several concurrent TCP
+/// sessions between the same pair aggregate into one view, so the polling
+/// cadence describes the pair, not any single session.
+pub fn conversation(
+    conn: &Connection,
+    connection_id: i64,
+) -> Result<ModbusConversation, CoreError> {
     let (host_a, host_b): (i64, i64) = conn.query_row(
         "SELECT src_host_id, dst_host_id FROM connections WHERE id = ?1",
         params![connection_id],
         |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
 
-    let pair = "((src_host_id = ?1 AND dst_host_id = ?2) OR (src_host_id = ?2 AND dst_host_id = ?1))";
+    let pair =
+        "((src_host_id = ?1 AND dst_host_id = ?2) OR (src_host_id = ?2 AND dst_host_id = ?1))";
 
     let mut stmt = conn.prepare(&format!(
         "SELECT function_code, COUNT(*), MAX(is_write)

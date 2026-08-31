@@ -31,14 +31,26 @@ pub fn generate(conn: &Connection) -> Result<(), CoreError> {
     conn.execute_batch("DELETE FROM findings")?;
 
     let hosts = load_hosts(conn)?;
+    let pairs = pair_flows(conn)?;
     let mut findings: Vec<FindingRow> = Vec::new();
 
-    cross_zone_conduits(conn, &hosts, &mut findings)?;
+    cross_zone_conduits(&pairs, &hosts, &mut findings);
     writes_to_controllers(conn, &hosts, &mut findings)?;
-    external_on_ot(conn, &hosts, &mut findings)?;
+    external_on_ot(&pairs, &hosts, &mut findings);
     scan_like_behavior(conn, &hosts, &mut findings)?;
     rejected_requests(conn, &hosts, &mut findings)?;
     cleartext_control(conn, &mut findings)?;
+
+    // Several generators iterate HashMaps, so impose an order here — the same
+    // capture must always produce the same findings list.
+    findings.sort_by(|a, b| {
+        (severity_rank(a.severity), a.kind, &a.title, &a.detail).cmp(&(
+            severity_rank(b.severity),
+            b.kind,
+            &b.title,
+            &b.detail,
+        ))
+    });
 
     let mut insert = conn.prepare(
         "INSERT INTO findings (kind, severity, title, detail, host_ids, connection_ids)
@@ -59,6 +71,14 @@ pub fn generate(conn: &Connection) -> Result<(), CoreError> {
 
 fn join_ids(ids: &[i64]) -> String {
     ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",")
+}
+
+fn severity_rank(severity: &str) -> u8 {
+    match severity {
+        "high" => 0,
+        "medium" => 1,
+        _ => 2,
+    }
 }
 
 fn load_hosts(conn: &Connection) -> Result<HashMap<i64, HostInfo>, CoreError> {
@@ -105,7 +125,13 @@ fn pair_flows(conn: &Connection) -> Result<HashMap<(i64, i64), PairFlow>, CoreEr
     )?;
     let rows: Vec<(i64, i64, i64, i64, String)> = stmt
         .query_map([], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
 
@@ -123,13 +149,17 @@ fn pair_flows(conn: &Connection) -> Result<HashMap<(i64, i64), PairFlow>, CoreEr
 }
 
 fn cross_zone_conduits(
-    conn: &Connection,
+    pairs: &HashMap<(i64, i64), PairFlow>,
     hosts: &HashMap<i64, HostInfo>,
     findings: &mut Vec<FindingRow>,
-) -> Result<(), CoreError> {
-    for ((a, b), flow) in pair_flows(conn)? {
-        let (Some(ha), Some(hb)) = (hosts.get(&a), hosts.get(&b)) else { continue };
-        let (Some(la), Some(lb)) = (ha.level, hb.level) else { continue };
+) {
+    for (&(a, b), flow) in pairs {
+        let (Some(ha), Some(hb)) = (hosts.get(&a), hosts.get(&b)) else {
+            continue;
+        };
+        let (Some(la), Some(lb)) = (ha.level, hb.level) else {
+            continue;
+        };
         if la == lb {
             continue;
         }
@@ -157,10 +187,9 @@ fn cross_zone_conduits(
                 flow.packets
             ),
             host_ids: vec![a, b],
-            connection_ids: flow.connection_ids,
+            connection_ids: flow.connection_ids.clone(),
         });
     }
-    Ok(())
 }
 
 fn writes_to_controllers(
@@ -177,7 +206,13 @@ fn writes_to_controllers(
     )?;
     let rows: Vec<(i64, i64, i64, String, String)> = stmt
         .query_map([], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
 
@@ -187,7 +222,10 @@ fn writes_to_controllers(
         };
         // Writing is what masters and engineering stations do; everyone else
         // writing to a controller deserves a closer look.
-        let expected = matches!(writer.role.as_str(), "scada" | "engineering-workstation" | "hmi");
+        let expected = matches!(
+            writer.role.as_str(),
+            "scada" | "engineering-workstation" | "hmi"
+        );
         let severity = if writer.is_external {
             "high"
         } else if expected {
@@ -205,7 +243,11 @@ fn writes_to_controllers(
             severity,
             title: format!(
                 "{} writes to {}",
-                if expected { &writer.role } else { "Unexpected source" },
+                if expected {
+                    &writer.role
+                } else {
+                    "Unexpected source"
+                },
                 target.ip
             ),
             detail: format!(
@@ -224,12 +266,14 @@ fn writes_to_controllers(
 }
 
 fn external_on_ot(
-    conn: &Connection,
+    pairs: &HashMap<(i64, i64), PairFlow>,
     hosts: &HashMap<i64, HostInfo>,
     findings: &mut Vec<FindingRow>,
-) -> Result<(), CoreError> {
-    for ((a, b), flow) in pair_flows(conn)? {
-        let (Some(ha), Some(hb)) = (hosts.get(&a), hosts.get(&b)) else { continue };
+) {
+    for (&(a, b), flow) in pairs {
+        let (Some(ha), Some(hb)) = (hosts.get(&a), hosts.get(&b)) else {
+            continue;
+        };
         let (ext, ot, ext_id, ot_id) = if ha.is_external {
             (ha, hb, a, b)
         } else if hb.is_external {
@@ -253,10 +297,9 @@ fn external_on_ot(
                 flow.packets
             ),
             host_ids: vec![ext_id, ot_id],
-            connection_ids: flow.connection_ids,
+            connection_ids: flow.connection_ids.clone(),
         });
     }
-    Ok(())
 }
 
 fn scan_like_behavior(
@@ -277,7 +320,9 @@ fn scan_like_behavior(
         })?
         .collect::<Result<Vec<_>, _>>()?;
     for (src, dst, port_count, conn_ids) in rows {
-        let (Some(hs), Some(hd)) = (hosts.get(&src), hosts.get(&dst)) else { continue };
+        let (Some(hs), Some(hd)) = (hosts.get(&src), hosts.get(&dst)) else {
+            continue;
+        };
         findings.push(FindingRow {
             kind: "scan",
             severity: "high",
@@ -338,7 +383,9 @@ fn rejected_requests(
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
         .collect::<Result<Vec<_>, _>>()?;
     for (host_id, exceptions, responses) in rows {
-        let Some(h) = hosts.get(&host_id) else { continue };
+        let Some(h) = hosts.get(&host_id) else {
+            continue;
+        };
         if exceptions * 20 < responses {
             continue; // under 5% — noise
         }
@@ -385,7 +432,11 @@ fn cleartext_control(conn: &Connection, findings: &mut Vec<FindingRow>) -> Resul
             "{} {} conversation{} ({}) carry no authentication or encryption — normal for these \
              protocols, which is exactly why network segmentation matters",
             flow_count,
-            if ot_protocols.len() == 1 { "control" } else { "OT" },
+            if ot_protocols.len() == 1 {
+                "control"
+            } else {
+                "OT"
+            },
             if flow_count == 1 { "" } else { "s" },
             ot_protocols.join(", ")
         ),

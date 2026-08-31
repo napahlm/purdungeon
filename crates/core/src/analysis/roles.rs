@@ -14,17 +14,56 @@ use crate::CoreError;
 
 /// Vendors whose devices on the wire are usually controllers or field gear.
 const OT_DEVICE_VENDORS: &[&str] = &[
-    "Siemens", "Rockwell", "ABB", "Schneider", "Wago", "Beckhoff", "Phoenix Contact",
-    "Omron", "Mitsubishi", "Honeywell", "Emerson", "Yokogawa", "GE Automation",
-    "B&R Automation", "Bosch Rexroth", "Fanuc", "Yaskawa", "KUKA", "Festo", "Pilz",
-    "Eaton", "Danfoss", "SEL", "Red Lion", "Turck", "IFM Electronic", "Pepperl+Fuchs",
-    "Balluff", "SICK", "Keyence", "Endress+Hauser", "Weidmuller", "Lenze", "Parker",
+    "Siemens",
+    "Rockwell",
+    "ABB",
+    "Schneider",
+    "Wago",
+    "Beckhoff",
+    "Phoenix Contact",
+    "Omron",
+    "Mitsubishi",
+    "Honeywell",
+    "Emerson",
+    "Yokogawa",
+    "GE Automation",
+    "B&R Automation",
+    "Bosch Rexroth",
+    "Fanuc",
+    "Yaskawa",
+    "KUKA",
+    "Festo",
+    "Pilz",
+    "Eaton",
+    "Danfoss",
+    "SEL",
+    "Red Lion",
+    "Turck",
+    "IFM Electronic",
+    "Pepperl+Fuchs",
+    "Balluff",
+    "SICK",
+    "Keyence",
+    "Endress+Hauser",
+    "Weidmuller",
+    "Lenze",
+    "Parker",
 ];
 
 /// Vendors that ship switches, routers, and industrial gateways.
 const NETWORK_VENDORS: &[&str] = &[
-    "Cisco", "Moxa", "Hirschmann", "Ruggedcom", "Westermo", "Belden", "NetModule",
-    "Lantronix", "Digi International", "HMS Industrial", "Hilscher", "ProSoft",
+    "Cisco",
+    "Moxa",
+    "Hirschmann",
+    "Ruggedcom",
+    "Westermo",
+    "Belden",
+    "NetModule",
+    "Lantronix",
+    "Digi International",
+    "HMS Industrial",
+    "Hilscher",
+    "ProSoft",
 ];
 
 #[derive(Debug, Default)]
@@ -50,7 +89,10 @@ fn is_multicast_or_broadcast(ip: &str) -> bool {
     let Some(first) = ip.split('.').next().and_then(|o| o.parse::<u8>().ok()) else {
         return false;
     };
-    (224..=239).contains(&first) || ip == "255.255.255.255" || ip.ends_with(".255")
+    // Only the addresses that are unambiguously not hosts. An `x.x.x.255`
+    // suffix is NOT enough — in a /23 or larger subnet that is a legitimate
+    // host address, and misclassifying it would hide a real device.
+    (224..=239).contains(&first) || ip == "255.255.255.255"
 }
 
 fn is_private(ip: &str) -> bool {
@@ -150,11 +192,27 @@ pub fn build_profiles(conn: &Connection) -> Result<HashMap<i64, HostProfile>, Co
         .collect::<Result<Vec<_>, _>>()?;
     for (src_id, dst_id, src_port, dst_port, proto) in rows {
         if ports::protocol_for_port(dst_port) == Some(proto.as_str()) {
-            profiles.entry(dst_id).or_default().protocols_served.insert(proto.clone());
-            profiles.entry(src_id).or_default().protocols_used.insert(proto);
+            profiles
+                .entry(dst_id)
+                .or_default()
+                .protocols_served
+                .insert(proto.clone());
+            profiles
+                .entry(src_id)
+                .or_default()
+                .protocols_used
+                .insert(proto);
         } else if ports::protocol_for_port(src_port) == Some(proto.as_str()) {
-            profiles.entry(src_id).or_default().protocols_served.insert(proto.clone());
-            profiles.entry(dst_id).or_default().protocols_used.insert(proto);
+            profiles
+                .entry(src_id)
+                .or_default()
+                .protocols_served
+                .insert(proto.clone());
+            profiles
+                .entry(dst_id)
+                .or_default()
+                .protocols_used
+                .insert(proto);
         }
     }
 
@@ -212,7 +270,10 @@ fn infer(profile: &HostProfile) -> Inference {
         .collect();
     let mb_server = profile.mb_responses_sent > 0 || profile.protocols_served.contains("modbus");
     let mb_client = profile.mb_requests_sent > 0;
-    let it_served = profile.protocols_served.iter().any(|p| !ports::is_ot_protocol(p));
+    let it_served = profile
+        .protocols_served
+        .iter()
+        .any(|p| !ports::is_ot_protocol(p));
 
     // Answers control-protocol requests → controller or field device
     if (mb_server || !ot_served.is_empty()) && !mb_client {
@@ -231,7 +292,12 @@ fn infer(profile: &HostProfile) -> Inference {
         } else {
             0.6
         };
-        return Inference { role: "plc", confidence, level: Some(1), evidence };
+        return Inference {
+            role: "plc",
+            confidence,
+            level: Some(1),
+            evidence,
+        };
     }
 
     // Speaks control protocols as a client → master of some kind
@@ -241,7 +307,8 @@ fn infer(profile: &HostProfile) -> Inference {
                 role: "plc",
                 confidence: 0.5,
                 level: Some(1),
-                evidence: "both answers and issues modbus requests (gateway or chained controller)".into(),
+                evidence: "both answers and issues modbus requests (gateway or chained controller)"
+                    .into(),
             };
         }
         if profile.mb_servers_polled >= 3 {
@@ -270,7 +337,11 @@ fn infer(profile: &HostProfile) -> Inference {
             evidence: format!(
                 "reads from {} modbus device{}",
                 profile.mb_servers_polled,
-                if profile.mb_servers_polled == 1 { "" } else { "s" }
+                if profile.mb_servers_polled == 1 {
+                    ""
+                } else {
+                    "s"
+                }
             ),
         };
     }
@@ -291,7 +362,10 @@ fn infer_without_control_traffic(
             role: "network-gear",
             confidence: 0.6,
             level: Some(3),
-            evidence: format!("{} hardware, no control traffic", vendor.unwrap_or_default()),
+            evidence: format!(
+                "{} hardware, no control traffic",
+                vendor.unwrap_or_default()
+            ),
         };
     }
     let db_served = ["mssql", "oracle", "mysql", "postgres"]
@@ -314,7 +388,11 @@ fn infer_without_control_traffic(
         };
     }
     if it_served {
-        let served: Vec<&str> = profile.protocols_served.iter().map(String::as_str).collect();
+        let served: Vec<&str> = profile
+            .protocols_served
+            .iter()
+            .map(String::as_str)
+            .collect();
         return Inference {
             role: "server",
             confidence: 0.4,
@@ -328,7 +406,10 @@ fn infer_without_control_traffic(
                 role: "field-device",
                 confidence: 0.4,
                 level: Some(1),
-                evidence: format!("{} hardware, only initiates traffic", vendor.unwrap_or_default()),
+                evidence: format!(
+                    "{} hardware, only initiates traffic",
+                    vendor.unwrap_or_default()
+                ),
             };
         }
         return Inference {
