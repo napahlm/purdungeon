@@ -10,9 +10,9 @@ import {
   levelColor,
   protoFamily,
   PROTO_COLORS,
-  ALERT,
   type ProtoFamily,
 } from '@/canvas/palette'
+import { UI } from '@/ui/tokens'
 import { parseCidr, ipInCidr, TRANSPORT_TOKENS } from '@/utils/search'
 import { useTimelineStore } from './timeline'
 
@@ -88,7 +88,7 @@ function buildLinks(edgeList: CanvasEdge[]): CanvasLink[] {
       crossZone,
       dominantFamily,
       conversationCount: edges.length,
-      color: crossZone ? ALERT : PROTO_COLORS[dominantFamily],
+      color: crossZone ? UI.alert : PROTO_COLORS[dominantFamily],
       width: linkWidth(totalBytes),
     })
   }
@@ -192,6 +192,9 @@ export const useTopologyStore = defineStore('topology', () => {
   const nodes = shallowRef<CanvasNode[]>([])
   const edges = shallowRef<CanvasEdge[]>([])
   const bands = shallowRef<BandLayout[]>([])
+  // Canvas nodes by host id, so per-pointermove work (drag) is O(1), not a
+  // scan of every node.
+  const nodesByHostId = shallowRef(new Map<number, CanvasNode>())
   // Every host and connection from the capture, including broadcast/multicast
   // pseudo-hosts and self-loops that never become canvas nodes or edges. The
   // detail panels resolve from these so a selection is never a dead end.
@@ -278,7 +281,11 @@ export const useTopologyStore = defineStore('topology', () => {
   })
 
   const filteredNodes = computed(() => {
-    if (!timelineStore.filtering && !crossZoneOnly.value) return visibleNodes.value
+    // A family filter removes edges, so without this a node whose every edge
+    // is hidden would float unconnected — hide it along with its traffic.
+    if (!timelineStore.filtering && !crossZoneOnly.value && hiddenFamilies.value.size === 0) {
+      return visibleNodes.value
+    }
     const activeHostIds = new Set<number>()
     for (const edge of filteredEdges.value) {
       activeHostIds.add(edge.source.host.id)
@@ -289,6 +296,19 @@ export const useTopologyStore = defineStore('topology', () => {
 
   /** One straight link per host pair, derived from the visible conversations. */
   const links = computed<CanvasLink[]>(() => buildLinks(filteredEdges.value))
+
+  /** Links touching each host, so a drag only updates the dragged node's links. */
+  const linksByHostId = computed(() => {
+    const byHost = new Map<number, CanvasLink[]>()
+    for (const link of links.value) {
+      for (const id of [link.source.host.id, link.target.host.id]) {
+        const list = byHost.get(id)
+        if (list) list.push(link)
+        else byHost.set(id, [link])
+      }
+    }
+    return byHost
+  })
 
   const selectedLink = computed(
     () => links.value.find((l) => l.key === selectedLinkKey.value) ?? null,
@@ -408,8 +428,7 @@ export const useTopologyStore = defineStore('topology', () => {
         connection: conn,
         source,
         target,
-        color: crossZone ? ALERT : PROTO_COLORS[family],
-        width: linkWidth(conn.byte_count),
+        color: crossZone ? UI.alert : PROTO_COLORS[family],
         family,
         crossZone,
       })
@@ -431,6 +450,7 @@ export const useTopologyStore = defineStore('topology', () => {
       }
     }
     nodes.value = built
+    nodesByHostId.value = nodeMap
     edges.value = builtEdges
     layoutVersion.value++
   }
@@ -443,8 +463,12 @@ export const useTopologyStore = defineStore('topology', () => {
    * or empties a level.
    */
   function refreshHost(updated: Host) {
-    hostsById.value.set(updated.id, updated)
-    const node = nodes.value.find((n) => n.host.id === updated.id)
+    // Replace the map so computeds reading hostsById (the detail panels)
+    // notice the change — an in-place .set on a shallowRef is invisible.
+    const nextHosts = new Map(hostsById.value)
+    nextHosts.set(updated.id, updated)
+    hostsById.value = nextHosts
+    const node = nodesByHostId.value.get(updated.id)
     if (!node) return
     node.host = updated
     node.color = levelColor(updated)
@@ -470,7 +494,7 @@ export const useTopologyStore = defineStore('topology', () => {
     for (const e of edges.value) {
       if (e.source.host.id === updated.id || e.target.host.id === updated.id) {
         e.crossZone = isCrossZone(effectiveLevel(e.source.host), effectiveLevel(e.target.host))
-        e.color = e.crossZone ? ALERT : PROTO_COLORS[e.family]
+        e.color = e.crossZone ? UI.alert : PROTO_COLORS[e.family]
       }
     }
     // Re-emit so the derived links (and their colours) refresh and the canvas
@@ -481,7 +505,7 @@ export const useTopologyStore = defineStore('topology', () => {
 
   /** Drag: free horizontally, clamped to the node's band vertically. */
   function moveNode(hostId: number, x: number, y: number) {
-    const node = nodes.value.find((n) => n.host.id === hostId)
+    const node = nodesByHostId.value.get(hostId)
     if (!node) return
     const band = bands.value.find((b) => b.key === node.bandKey)
     node.x = x
@@ -541,6 +565,7 @@ export const useTopologyStore = defineStore('topology', () => {
     nodes.value = []
     edges.value = []
     bands.value = []
+    nodesByHostId.value = new Map()
     hostsById.value = new Map()
     connectionsById.value = new Map()
     selectedNodeId.value = null
@@ -577,6 +602,7 @@ export const useTopologyStore = defineStore('topology', () => {
     filteredNodes,
     filteredEdges,
     links,
+    linksByHostId,
     selectedLink,
     matchedNodeIds,
     matchedLinkKeys,

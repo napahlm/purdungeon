@@ -1,6 +1,6 @@
 import Konva from 'konva'
 import type { CanvasLink } from '@/types/canvas'
-import { SELECTION, TEXT_SECONDARY } from './palette'
+import { UI, FONTS } from '@/ui/tokens'
 
 const BASE_OPACITY = 0.5
 const CROSS_ZONE_OPACITY = 0.9
@@ -31,6 +31,7 @@ export function createLinkLine(
     opacity: baseOpacity(link),
     hitStrokeWidth: 14,
     id: `link-${link.key}`,
+    perfectDrawEnabled: false,
   })
 
   if (callbacks?.onClick) {
@@ -54,7 +55,7 @@ export function createLinkLine(
 
 export function updateLinkLine(line: Konva.Line, link: CanvasLink, selected: boolean) {
   line.points(endpoints(link))
-  line.stroke(selected ? SELECTION : link.color)
+  line.stroke(selected ? UI.selection : link.color)
   line.strokeWidth(selected ? link.width + 1.5 : link.width)
   line.opacity(selected ? 1 : baseOpacity(link))
 }
@@ -65,7 +66,7 @@ export function createLinkBadge(link: CanvasLink): Konva.Label {
   const label = new Konva.Label({ id: `badge-${link.key}`, listening: false })
   label.add(
     new Konva.Tag({
-      fill: 'rgba(18,22,27,0.88)',
+      fill: UI.badgeBg,
       stroke: link.color,
       strokeWidth: 1,
       cornerRadius: 8,
@@ -75,8 +76,8 @@ export function createLinkBadge(link: CanvasLink): Konva.Label {
     new Konva.Text({
       text: String(link.conversationCount),
       fontSize: 10,
-      fontFamily: '-apple-system, BlinkMacSystemFont, system-ui, sans-serif',
-      fill: TEXT_SECONDARY,
+      fontFamily: FONTS.sans,
+      fill: UI.textSecondary,
       padding: 3,
     }),
   )
@@ -85,6 +86,13 @@ export function createLinkBadge(link: CanvasLink): Konva.Label {
 }
 
 export function updateLinkBadge(label: Konva.Label, link: CanvasLink) {
+  // A stitched capture can change how many conversations a pair carries.
+  const text = label.getText() as Konva.Text | undefined
+  if (text && text.text() !== String(link.conversationCount)) {
+    text.text(String(link.conversationCount))
+  }
+  const tag = label.getTag() as Konva.Tag | undefined
+  if (tag) tag.stroke(link.color)
   positionBadge(label, link)
 }
 

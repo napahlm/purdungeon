@@ -1,15 +1,24 @@
 import Konva from 'konva'
 import type { CanvasNode } from '@/types/canvas'
-import { ACCENT, SELECTION, TEXT_SECONDARY } from './palette'
+import { UI, FONTS, MOTION } from '@/ui/tokens'
 
 const RADIUS = 13
 
+/**
+ * The visual for one device. Groups are centered on the node's position with
+ * the shape child named 'node-shape' — future pixel-art sprites swap in here
+ * as a `Konva.Image` with `offsetX/Y` at half its size, keeping the same
+ * centered-origin contract; the ring, label, drag, and hit behavior on the
+ * parent group stay untouched.
+ */
 function makeShape(node: CanvasNode): Konva.Shape {
   const common = {
     fill: node.color,
     stroke: node.dashed ? node.color : undefined,
     dash: node.dashed ? [4, 3] : undefined,
     name: 'node-shape',
+    // Skip Konva's buffer-canvas pass; these simple fills don't need it.
+    perfectDrawEnabled: false,
   }
   if (node.shape === 'square') {
     return new Konva.Rect({
@@ -36,11 +45,12 @@ function makeShape(node: CanvasNode): Konva.Shape {
     // External hosts: hollow dashed circle
     return new Konva.Circle({
       radius: RADIUS,
-      fill: '#0e1116',
+      fill: UI.bgPrimary,
       stroke: node.color,
       strokeWidth: 1.5,
       dash: [4, 3],
       name: 'node-shape',
+      perfectDrawEnabled: false,
     })
   }
   return new Konva.Circle({ ...common, radius: RADIUS })
@@ -64,20 +74,24 @@ export function createNodeGroup(
   // Selection ring, hidden until selected
   const ring = new Konva.Circle({
     radius: RADIUS + 5,
-    stroke: SELECTION,
+    stroke: UI.selection,
     strokeWidth: 1.5,
     visible: false,
     name: 'node-ring',
+    listening: false,
+    perfectDrawEnabled: false,
   })
 
   const label = new Konva.Text({
     text: node.label,
     fontSize: 10.5,
-    fontFamily: 'ui-monospace, SF Mono, Menlo, monospace',
-    fill: TEXT_SECONDARY,
+    fontFamily: FONTS.mono,
+    fill: UI.textSecondary,
     align: 'center',
     y: RADIUS + 8,
     name: 'node-label',
+    listening: false,
+    perfectDrawEnabled: false,
   })
   label.x(-label.width() / 2)
 
@@ -124,8 +138,23 @@ export function updateNodeGroup(
 
   const ring = group.findOne('.node-ring') as Konva.Circle | undefined
   if (ring) {
-    ring.visible(selected || searchState === 'match')
-    ring.stroke(searchState === 'match' ? ACCENT : SELECTION)
+    const show = selected || searchState === 'match'
+    const appearing = show && !ring.visible()
+    ring.visible(show)
+    ring.stroke(searchState === 'match' ? UI.accent : UI.selection)
+    if (appearing) {
+      // A quick settle-in so selection feels acknowledged, not switched.
+      ring.scale({ x: 0.6, y: 0.6 })
+      ring.opacity(0)
+      new Konva.Tween({
+        node: ring,
+        duration: MOTION.fast / 1000,
+        easing: Konva.Easings.EaseOut,
+        scaleX: 1,
+        scaleY: 1,
+        opacity: 1,
+      }).play()
+    }
   }
   group.opacity(searchState === 'dim' ? 0.18 : 1)
 }

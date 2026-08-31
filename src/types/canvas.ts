@@ -17,7 +17,6 @@ export interface CanvasEdge {
   source: CanvasNode
   target: CanvasNode
   color: string
-  width: number
   family: ProtoFamily
   crossZone: boolean
 }
