@@ -5,7 +5,7 @@ Offline desktop tool for OT/ICS network analysis. Drop a packet capture on the w
 ## What it does
 
 1. Drag a `.pcap` / `.pcapng` onto the window (or use the file picker). Parsing runs off the main thread with honest progress stages.
-2. The Rust core decodes L2–L4, parses Modbus TCP down to function codes, unit IDs, and coil/register accesses, and names other protocols by port.
+2. The Rust core decodes IPv4 over Ethernet (pcap and pcapng, microsecond and nanosecond timestamps, snaplen-truncated and multi-section files included), parses Modbus TCP down to function codes, unit IDs, and coil/register accesses, and names other protocols by port. Anything it can't read (IPv6, ARP, other link types) is counted and surfaced rather than silently dropped.
 3. Discovery infers a role for every host — PLC, SCADA/master, HMI, engineering workstation, historian, network gear, … — each as a best guess with confidence and evidence, plus a Purdue level. Both are overridable in the UI.
 4. The network renders as a **Purdue-layered topology**: assets in horizontal bands by level (process at the bottom, enterprise at the top), node color = level, node shape = role, edge color = protocol, edge width = volume. Conversations that skip a level or cross the control/IT boundary are highlighted.
 5. A findings list surfaces what a consultant checks first: cross-zone conduits, who writes to controllers, external addresses on OT segments, scan-like behavior, cleartext control protocols. Each finding highlights the relevant nodes and edges on click.
