@@ -16,6 +16,7 @@ import FilterBar from '@/components/FilterBar.vue'
 import FindingsPanel from '@/components/FindingsPanel.vue'
 import LevelLegend from '@/components/LevelLegend.vue'
 import LoadingOverlay from '@/components/LoadingOverlay.vue'
+import { FINDINGS_PANEL_WIDTH, FINDINGS_RAIL_WIDTH, DETAIL_PANEL_WIDTH } from '@/ui/layout'
 
 const appStore = useAppStore()
 const topology = useTopologyStore()
@@ -29,6 +30,12 @@ const panelOpen = computed(
     topology.selectedLinkKey !== null,
 )
 
+// Floating controls sit beside the overlaying panels — one shared set of
+// widths (ui/layout.ts) keeps them aligned as panels open and collapse.
+const filterBarLeft = computed(
+  () => (appStore.findingsCollapsed ? FINDINGS_RAIL_WIDTH : FINDINGS_PANEL_WIDTH) + 12 + 'px',
+)
+const legendRight = computed(() => (panelOpen.value ? DETAIL_PANEL_WIDTH + 12 : 12) + 'px')
 
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
@@ -71,31 +78,39 @@ onUnmounted(() => {
       <div class="relative flex flex-1 overflow-hidden">
         <FindingsPanel />
         <TopologyCanvas />
-        <NodeDetailPanel v-if="topology.selectedNodeId !== null" />
-        <EdgeDetailPanel v-if="topology.selectedEdgeId !== null" />
-        <LinkDetailPanel
-          v-if="topology.selectedEdgeId === null && topology.selectedLinkKey !== null"
-        />
-        <div class="absolute bottom-3 left-83 z-10">
+        <Transition name="panel">
+          <NodeDetailPanel v-if="topology.selectedNodeId !== null" />
+        </Transition>
+        <Transition name="panel">
+          <EdgeDetailPanel v-if="topology.selectedEdgeId !== null" />
+        </Transition>
+        <Transition name="panel">
+          <LinkDetailPanel
+            v-if="topology.selectedEdgeId === null && topology.selectedLinkKey !== null"
+          />
+        </Transition>
+        <div class="absolute bottom-3 z-10" :style="{ left: filterBarLeft }">
           <FilterBar />
         </div>
-        <div class="absolute top-3 z-10" :class="panelOpen ? 'right-89' : 'right-3'">
+        <div class="absolute top-3 z-10" :style="{ right: legendRight }">
           <LevelLegend />
         </div>
       </div>
       <TimelineBar />
       <SearchBar />
       <!-- Drop target feedback over a loaded view -->
-      <div
-        v-if="appStore.dragHovering"
-        class="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-bg-primary/70 backdrop-blur-sm"
-      >
+      <Transition name="overlay">
         <div
-          class="rounded-2xl border border-dashed border-accent bg-bg-secondary px-10 py-6 text-sm text-text-primary"
+          v-if="appStore.dragHovering"
+          class="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-bg-primary/70 backdrop-blur-sm"
         >
-          Drop to add to this network
+          <div
+            class="rounded-2xl border border-dashed border-accent bg-bg-secondary px-10 py-6 text-sm text-text-primary"
+          >
+            Drop to add to this network
+          </div>
         </div>
-      </div>
+      </Transition>
     </template>
     <FileDropZone v-else />
 

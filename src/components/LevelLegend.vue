@@ -1,13 +1,11 @@
 <script setup lang="ts">
 import { useTopologyStore } from '@/stores/topology'
-import { LEVEL_COLORS, BANDS } from '@/canvas/palette'
+import { BANDS, levelColorFor } from '@/canvas/palette'
 
 const topology = useTopologyStore()
 
 function colorFor(key: string): string {
-  const band = BANDS.find((b) => b.key === key)
-  const level = band?.level
-  return LEVEL_COLORS[level === null || level === undefined ? 'unknown' : String(level)]
+  return levelColorFor(BANDS.find((b) => b.key === key)?.level)
 }
 </script>
 

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useTopologyStore } from '@/stores/topology'
-import { PROTO_COLORS, PROTO_FAMILY_LABELS, ALERT } from '@/canvas/palette'
+import { PROTO_COLORS, PROTO_FAMILY_LABELS } from '@/canvas/palette'
+import { UI } from '@/ui/tokens'
 
 const topology = useTopologyStore()
 </script>
@@ -50,7 +51,7 @@ const topology = useTopologyStore()
       title="Show only conversations that cross a Purdue boundary"
       @click="topology.crossZoneOnly = !topology.crossZoneOnly"
     >
-      <span class="inline-block h-2 w-2 rounded-full" :style="{ backgroundColor: ALERT }" />
+      <span class="inline-block h-2 w-2 rounded-full" :style="{ backgroundColor: UI.alert }" />
       Cross-zone · {{ topology.crossZoneCount }}
     </button>
   </div>

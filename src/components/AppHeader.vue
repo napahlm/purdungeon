@@ -1,17 +1,30 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { open } from '@tauri-apps/plugin-dialog'
+import { ref, computed } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { useTopologyStore } from '@/stores/topology'
 import { useTimelineStore } from '@/stores/timeline'
 import { useTauri } from '@/composables/useTauri'
+import { modKeyLabel } from '@/ui/platform'
 
 const appStore = useAppStore()
 const topologyStore = useTopologyStore()
 const timelineStore = useTimelineStore()
-const { loadFiles } = useTauri()
+const { pickAndLoadFiles } = useTauri()
 
 const showSources = ref(false)
+
+// What the parser read but couldn't show, so "why is my network so small?"
+// has an answer right in the header.
+const skippedTotal = computed(
+  () => appStore.skipped.ipv6 + appStore.skipped.arp + appStore.skipped.other,
+)
+const skippedTitle = computed(() => {
+  const parts: string[] = []
+  if (appStore.skipped.ipv6 > 0) parts.push(`${appStore.skipped.ipv6.toLocaleString()} IPv6`)
+  if (appStore.skipped.arp > 0) parts.push(`${appStore.skipped.arp.toLocaleString()} ARP`)
+  if (appStore.skipped.other > 0) parts.push(`${appStore.skipped.other.toLocaleString()} other`)
+  return `Not shown: ${parts.join(', ')} — purdungeon currently reads IPv4 over Ethernet`
+})
 
 function fileName(path: string): string {
   const sep = path.includes('\\') ? '\\' : '/'
@@ -19,12 +32,7 @@ function fileName(path: string): string {
 }
 
 async function addFiles() {
-  const selected = await open({
-    multiple: true,
-    filters: [{ name: 'Packet captures', extensions: ['pcap', 'pcapng', 'cap'] }],
-  })
-  if (!selected) return
-  await loadFiles(Array.isArray(selected) ? selected : [selected])
+  await pickAndLoadFiles()
 }
 
 function closeCapture() {
@@ -52,13 +60,21 @@ function closeCapture() {
           {{ appStore.sources.length }} captures ▾
         </button>
         <span class="mx-1.5 text-border-strong">·</span>
-        {{ topologyStore.nodes.length }} assets
+        {{ topologyStore.nodes.length }} devices
         <span class="mx-1.5 text-border-strong">·</span>
         {{ topologyStore.edges.length }} conversations
+        <template v-if="skippedTotal > 0">
+          <span class="mx-1.5 text-border-strong">·</span>
+          <span :title="skippedTitle" class="cursor-help underline decoration-dotted">
+            {{ skippedTotal.toLocaleString() }} packets not shown
+          </span>
+        </template>
       </span>
     </div>
     <div class="flex items-center gap-1">
-      <span class="mr-2 hidden text-xs text-text-muted sm:inline">⌘K to search</span>
+      <span class="mr-2 hidden text-xs text-text-muted sm:inline"
+        >{{ modKeyLabel }} K to search</span
+      >
       <button
         class="rounded-md px-2.5 py-1 text-xs text-text-secondary transition-colors hover:bg-bg-elevated hover:text-text-primary"
         @click="addFiles"

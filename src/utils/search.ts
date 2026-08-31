@@ -40,7 +40,7 @@ export function ipInCidr(ip: string, cidr: Cidr): boolean {
   const value = ipToInt(ip)
   if (value === null) return false
   if (cidr.prefix === 0) return true
-  const mask = cidr.prefix === 32 ? 0xffffffff : (~((1 << (32 - cidr.prefix)) - 1)) >>> 0
+  const mask = cidr.prefix === 32 ? 0xffffffff : ~((1 << (32 - cidr.prefix)) - 1) >>> 0
   return (value & mask) === (cidr.base & mask)
 }
 
