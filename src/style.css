@@ -43,10 +43,20 @@
   --color-proto-it: #8f9aa8;
   --color-proto-other: #4a545f;
 
-  /* Legacy aliases still referenced by older components */
-  --color-edge-tcp: #4a545f;
-  --color-edge-udp: #5d6a78;
-  --color-edge-modbus: #4cc2ff;
+  /* Canvas chrome */
+  --color-band-fill: rgba(255, 255, 255, 0.022);
+  --color-band-line: rgba(255, 255, 255, 0.05);
+  --color-badge-bg: rgba(20, 25, 33, 0.88);
+
+  /* Type */
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, monospace;
+
+  /* Motion: one scale for everything that moves */
+  --duration-fast: 140ms;
+  --duration-base: 220ms;
+  --duration-slow: 360ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 html,
@@ -59,12 +69,54 @@ body,
   overflow: hidden;
   background-color: var(--color-bg-primary);
   color: var(--color-text-primary);
-  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
+  font-family: var(--font-sans);
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
 }
 
 code,
 .font-mono {
-  font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, monospace;
+  font-family: var(--font-mono);
+}
+
+/* Keyboard focus gets a visible ring; pointer focus stays quiet. */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+  border-radius: 4px;
+}
+
+/* Panel slide+fade, used by the <Transition> wrappers around side panels. */
+.panel-enter-active,
+.panel-leave-active {
+  transition:
+    transform var(--duration-base) var(--ease-out),
+    opacity var(--duration-base) var(--ease-out);
+}
+.panel-enter-from,
+.panel-leave-to {
+  transform: translateX(24px);
+  opacity: 0;
+}
+
+.panel-left-enter-active,
+.panel-left-leave-active {
+  transition:
+    transform var(--duration-base) var(--ease-out),
+    opacity var(--duration-base) var(--ease-out);
+}
+.panel-left-enter-from,
+.panel-left-leave-to {
+  transform: translateX(-24px);
+  opacity: 0;
+}
+
+/* Overlay fade for modal-ish surfaces (search palette, drop hint). */
+.overlay-enter-active,
+.overlay-leave-active {
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+.overlay-enter-from,
+.overlay-leave-to {
+  opacity: 0;
 }

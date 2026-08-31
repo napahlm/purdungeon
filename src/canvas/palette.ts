@@ -1,31 +1,31 @@
 import type { Host } from '@/types/network'
 import { effectiveLevel, effectiveRole } from '@/types/network'
 
-/** Mirrors the design tokens in style.css — Konva can't read CSS variables. */
-export const LEVEL_COLORS: Record<string, string> = {
-  '0': '#ef8e6d',
-  '1': '#e8b15c',
-  '2': '#d6c35e',
-  '3': '#6fb8c9',
-  '4': '#5b9dff',
-  '5': '#9a8cff',
-  unknown: '#6a7480',
-}
-
-export const PROTO_COLORS: Record<ProtoFamily, string> = {
-  modbus: '#4cc2ff',
-  ot: '#62c4ad',
-  it: '#8f9aa8',
-  other: '#4a545f',
-}
-
-export const ACCENT = '#5b9dff'
-export const ALERT = '#f07a5f'
-export const TEXT_SECONDARY = '#9aa4b1'
-export const TEXT_MUTED = '#5f6975'
-export const SELECTION = '#e7eaef'
-
+export type LevelKey = '0' | '1' | '2' | '3' | '4' | '5' | 'unknown'
 export type ProtoFamily = 'modbus' | 'ot' | 'it' | 'other'
+
+/**
+ * Populated from the CSS design tokens by `initTokens()` before the app
+ * mounts — style.css is the single source of color truth; nothing here
+ * hard-codes a hex value.
+ */
+export const LEVEL_COLORS: Record<LevelKey, string> = {
+  '0': '',
+  '1': '',
+  '2': '',
+  '3': '',
+  '4': '',
+  '5': '',
+  unknown: '',
+}
+
+/** Populated from the CSS design tokens by `initTokens()`. */
+export const PROTO_COLORS: Record<ProtoFamily, string> = {
+  modbus: '',
+  ot: '',
+  it: '',
+  other: '',
+}
 
 const OT_PROTOCOLS = new Set([
   's7comm',
@@ -54,9 +54,16 @@ export const PROTO_FAMILY_LABELS: Record<ProtoFamily, string> = {
   other: 'Unnamed',
 }
 
+export function levelColorFor(level: number | null | undefined): string {
+  const key: LevelKey =
+    level === null || level === undefined || level < 0 || level > 5
+      ? 'unknown'
+      : (String(level) as LevelKey)
+  return LEVEL_COLORS[key]
+}
+
 export function levelColor(host: Host): string {
-  const level = effectiveLevel(host)
-  return LEVEL_COLORS[level === null ? 'unknown' : String(level)]
+  return levelColorFor(effectiveLevel(host))
 }
 
 /** Horizontal bands of the Purdue-ordered view, top to bottom. */
