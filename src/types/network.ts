@@ -108,17 +108,6 @@ export interface HostDetail {
   total_bytes: number
 }
 
-export interface Packet {
-  id: number
-  timestamp: number
-  src_ip: string
-  dst_ip: string
-  src_port: number
-  dst_port: number
-  protocol: string
-  length: number
-}
-
 export interface ModbusFunctionStat {
   function_code: number
   function_name: string
@@ -163,14 +152,24 @@ export interface Finding {
   connection_ids: number[]
 }
 
+/** One time-bucket of traffic volume, for the timeline histogram. */
+export interface HistogramBucket {
+  start: number
+  packet_count: number
+  byte_count: number
+}
+
+/** Packets read but not imported, by reason. */
+export interface SkippedPackets {
+  ipv6: number
+  arp: number
+  other: number
+}
+
 export interface ImportResult {
   host_count: number
   connection_count: number
   packet_count: number
+  skipped: SkippedPackets
   time_range: [number, number]
-}
-
-export interface TimeRange {
-  start: number
-  end: number
 }

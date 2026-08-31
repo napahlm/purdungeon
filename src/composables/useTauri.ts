@@ -1,11 +1,12 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { open } from '@tauri-apps/plugin-dialog'
 import type {
   Host,
   Connection,
   ImportResult,
+  HistogramBucket,
   HostDetail,
-  Packet,
   ModbusHostActivity,
   ModbusConversation,
   Finding,
@@ -17,6 +18,9 @@ import { useTimelineStore } from '@/stores/timeline'
 
 const ACCEPTED_EXTENSIONS = ['pcap', 'pcapng', 'cap']
 
+/** Resolution of the timeline's traffic sparkline. */
+const HISTOGRAM_BUCKETS = 120
+
 export function isCaptureFile(path: string): boolean {
   const ext = path.split('.').pop()?.toLowerCase() ?? ''
   return ACCEPTED_EXTENSIONS.includes(ext)
@@ -26,10 +30,10 @@ export function isCaptureFile(path: string): boolean {
 function humanizeError(raw: string): string {
   const msg = raw.toLowerCase()
   if (msg.includes('file too small') || msg.includes('reader') || msg.includes('parse error')) {
-    return "This file doesn't look like a packet capture. purdungeon reads .pcap and .pcapng files."
+    return 'This file doesn’t look like a packet capture. purdungeon reads .pcap and .pcapng files.'
   }
   if (msg.includes('io error') || msg.includes('no such file') || msg.includes('os error')) {
-    return "Couldn't open that file. Check that it still exists and is readable."
+    return 'Couldn’t open that file. Check that it still exists and is readable.'
   }
   return raw
 }
@@ -55,6 +59,10 @@ export function useTauri() {
     return invoke<[number, number]>('get_time_range')
   }
 
+  async function getTrafficHistogram(buckets: number): Promise<HistogramBucket[]> {
+    return invoke<HistogramBucket[]>('get_traffic_histogram', { buckets })
+  }
+
   async function saveNodePosition(hostId: number, x: number, y: number): Promise<void> {
     return invoke<void>('save_node_position', { hostId, x, y })
   }
@@ -65,10 +73,6 @@ export function useTauri() {
 
   async function getHostDetail(hostId: number): Promise<HostDetail> {
     return invoke<HostDetail>('get_host_detail', { hostId })
-  }
-
-  async function getConnectionPackets(connectionId: number, limit: number): Promise<Packet[]> {
-    return invoke<Packet[]>('get_connection_packets', { connectionId, limit })
   }
 
   async function getFindings(): Promise<Finding[]> {
@@ -91,24 +95,50 @@ export function useTauri() {
     return invoke<void>('set_level_override', { hostId, level })
   }
 
+  /** Fetch the (possibly merged) session and rebuild the topology from it. */
+  async function refreshView(reset: boolean) {
+    const appStore = useAppStore()
+    const topologyStore = useTopologyStore()
+    const timelineStore = useTimelineStore()
+    appStore.setStage('building-view')
+    const [hosts, connections, timeRange, findings, positions, histogram] = await Promise.all([
+      getHosts(),
+      getConnections(),
+      getTimeRange(),
+      getFindings(),
+      getNodePositions(),
+      getTrafficHistogram(HISTOGRAM_BUCKETS),
+    ])
+    if (reset) {
+      // Clear selection, filters, and findings left over from a previous capture
+      topologyStore.reset()
+    }
+    timelineStore.setFullRange(timeRange[0], timeRange[1])
+    timelineStore.histogram = histogram
+    topologyStore.buildGraph(hosts, connections, positions)
+    topologyStore.findings = findings
+  }
+
+  type LoadOutcome = 'failed' | 'loaded' | 'refreshed'
+
   /**
    * Load a capture. `replace` starts a fresh session; `append` stitches the
-   * file into the current one. Either way the graph is rebuilt from the
-   * (possibly merged) session.
+   * file into the current one. With `refresh` (the default) the graph is
+   * rebuilt afterwards; a multi-file batch turns it off for all but the last
+   * file so the view is built once, not once per file.
    */
   async function loadFile(
     path: string,
     mode: 'replace' | 'append' = 'replace',
     fileIndex = 1,
     fileCount = 1,
-  ) {
+    refresh = true,
+  ): Promise<LoadOutcome> {
     const appStore = useAppStore()
-    const topologyStore = useTopologyStore()
-    const timelineStore = useTimelineStore()
 
     if (!isCaptureFile(path)) {
       appStore.setError('That isn’t a capture file. Drop a .pcap or .pcapng instead.')
-      return
+      return 'failed'
     }
 
     appStore.startLoading(fileIndex, fileCount)
@@ -123,7 +153,7 @@ export function useTauri() {
     const unlistenStage = await listen<ImportStage>('import-stage', (event) => {
       appStore.setStage(event.payload)
     })
-    let ok = false
+    let outcome: LoadOutcome = 'failed'
     try {
       const result = mode === 'append' ? await addPcap(path) : await importPcap(path)
       if (result.packet_count === 0) {
@@ -134,28 +164,18 @@ export function useTauri() {
             'No readable network traffic in this capture. purdungeon currently reads IPv4 over Ethernet.',
           )
         } else {
-          appStore.addSource(path, 0)
-          ok = true
+          appStore.addSource(path, 0, result.skipped)
+          outcome = 'loaded'
         }
       } else {
-        appStore.setStage('building-view')
-        const [hosts, connections, timeRange, findings, positions] = await Promise.all([
-          getHosts(),
-          getConnections(),
-          getTimeRange(),
-          getFindings(),
-          getNodePositions(),
-        ])
-        if (mode === 'replace') {
-          // Clear selection, filters, and findings left over from a previous capture
-          topologyStore.reset()
+        if (mode === 'replace') appStore.setLoadedFile(path, result.packet_count, result.skipped)
+        else appStore.addSource(path, result.packet_count, result.skipped)
+        if (refresh) {
+          await refreshView(mode === 'replace')
+          outcome = 'refreshed'
+        } else {
+          outcome = 'loaded'
         }
-        timelineStore.setFullRange(timeRange[0], timeRange[1])
-        topologyStore.buildGraph(hosts, connections, positions)
-        topologyStore.findings = findings
-        if (mode === 'replace') appStore.setLoadedFile(path, result.packet_count)
-        else appStore.addSource(path, result.packet_count)
-        ok = true
       }
     } catch (e) {
       appStore.setError(humanizeError(e instanceof Error ? e.message : String(e)))
@@ -165,13 +185,15 @@ export function useTauri() {
     }
     // Drain the step animation to the end (honouring each step's minimum screen
     // time) before the overlay closes. On error the overlay stays for the ack.
-    if (ok) await appStore.finishLoading()
+    if (outcome !== 'failed') await appStore.finishLoading()
+    return outcome
   }
 
   /**
    * Load several captures in one gesture: the first replaces the session (or
    * appends if one is already open), the rest stitch in, so the network grows
-   * file by file. Stops if a file fails.
+   * file by file. Stops if a file fails. The view is rebuilt once at the end,
+   * not after every file.
    */
   async function loadFiles(paths: string[]) {
     const appStore = useAppStore()
@@ -180,11 +202,30 @@ export function useTauri() {
       appStore.setError('No capture files here. Drop a .pcap or .pcapng instead.')
       return
     }
+    const startingFresh = appStore.loadedFile === null
+    let loadedAny = false
+    let refreshed = false
     for (let i = 0; i < captures.length; i++) {
-      const mode = i === 0 && appStore.loadedFile === null ? 'replace' : 'append'
-      await loadFile(captures[i], mode, i + 1, captures.length)
+      const mode = i === 0 && startingFresh ? 'replace' : 'append'
+      const isLast = i === captures.length - 1
+      const outcome = await loadFile(captures[i], mode, i + 1, captures.length, isLast)
+      if (outcome !== 'failed') loadedAny = true
+      if (outcome === 'refreshed') refreshed = true
       if (appStore.error) break
     }
+    // A mid-batch failure or an empty last file can leave imported data
+    // unrendered — build the view for whatever did load.
+    if (loadedAny && !refreshed) await refreshView(startingFresh)
+  }
+
+  /** Open the native capture picker and load whatever the user selects. */
+  async function pickAndLoadFiles() {
+    const selected = await open({
+      multiple: true,
+      filters: [{ name: 'Packet captures', extensions: ACCEPTED_EXTENSIONS }],
+    })
+    if (!selected) return
+    await loadFiles(Array.isArray(selected) ? selected : [selected])
   }
 
   return {
@@ -193,10 +234,10 @@ export function useTauri() {
     getHosts,
     getConnections,
     getTimeRange,
+    getTrafficHistogram,
     saveNodePosition,
     getNodePositions,
     getHostDetail,
-    getConnectionPackets,
     getFindings,
     getModbusHostActivity,
     getModbusConversation,
@@ -204,5 +245,6 @@ export function useTauri() {
     setLevelOverride,
     loadFile,
     loadFiles,
+    pickAndLoadFiles,
   }
 }

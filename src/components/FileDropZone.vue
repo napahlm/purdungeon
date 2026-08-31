@@ -1,24 +1,14 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { open } from '@tauri-apps/plugin-dialog'
 import { useTauri } from '@/composables/useTauri'
 import { useAppStore } from '@/stores/app'
 
 const appStore = useAppStore()
-const { loadFiles } = useTauri()
+const { pickAndLoadFiles } = useTauri()
 
 // Drag-drop events are handled at the app root; this only mirrors the hover.
 // Loading and error feedback live in LoadingOverlay.
 const hovering = computed(() => appStore.dragHovering)
-
-async function openFilePicker() {
-  const selected = await open({
-    multiple: true,
-    filters: [{ name: 'Packet captures', extensions: ['pcap', 'pcapng', 'cap'] }],
-  })
-  if (!selected) return
-  await loadFiles(Array.isArray(selected) ? selected : [selected])
-}
 </script>
 
 <template>
@@ -54,7 +44,7 @@ async function openFilePicker() {
         <p class="text-xs text-text-muted">.pcap or .pcapng · several files stitch together</p>
         <button
           class="mt-2 rounded-lg bg-bg-elevated px-4 py-1.5 text-sm text-text-primary transition-colors hover:bg-border"
-          @click="openFilePicker"
+          @click="pickAndLoadFiles"
         >
           Choose files
         </button>

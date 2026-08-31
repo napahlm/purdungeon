@@ -36,11 +36,17 @@ const fileLabel = computed(() =>
     >
       <div class="flex items-center gap-2.5">
         <span class="flex h-6 w-6 items-center justify-center rounded-full bg-alert/15">
-          <svg viewBox="0 0 16 16" class="h-3.5 w-3.5 text-alert" fill="none" stroke="currentColor" stroke-width="2">
+          <svg
+            viewBox="0 0 16 16"
+            class="h-3.5 w-3.5 text-alert"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
             <path d="M8 4.5v4M8 11h.01" stroke-linecap="round" />
           </svg>
         </span>
-        <h2 class="text-sm font-semibold text-text-primary">Couldn't read that capture</h2>
+        <h2 class="text-sm font-semibold text-text-primary">Couldn’t read that capture</h2>
       </div>
       <p class="text-sm leading-relaxed text-text-secondary">{{ appStore.error }}</p>
       <button
@@ -73,7 +79,11 @@ const fileLabel = computed(() =>
           }"
         >
           <span class="flex h-4 w-4 items-center justify-center" aria-hidden="true">
-            <svg v-if="stageState(i) === 'done'" viewBox="0 0 16 16" class="h-3.5 w-3.5 text-accent">
+            <svg
+              v-if="stageState(i) === 'done'"
+              viewBox="0 0 16 16"
+              class="h-3.5 w-3.5 text-accent"
+            >
               <path
                 fill="none"
                 stroke="currentColor"

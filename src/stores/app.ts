@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
+import type { SkippedPackets } from '@/types/network'
 
 /** Backend stages arrive over the `import-stage` event; `building-view`
  *  is the frontend's own final stage while the graph is assembled. */
@@ -46,6 +47,12 @@ export const useAppStore = defineStore('app', () => {
   const importProgress = ref(0) // 0.0 – 1.0, within the reading stage
   const stage = ref<ImportStage | null>(null)
   const dragHovering = ref(false)
+  // The findings panel's collapsed state lives here (not in the panel) so the
+  // canvas can frame content into the actually-visible area.
+  const findingsCollapsed = ref(false)
+  // Packets the parser read but couldn't import (IPv6, ARP, …), summed across
+  // every capture stitched into the session. Surfaces why a view looks thin.
+  const skipped = ref<SkippedPackets>({ ipv6: 0, arp: 0, other: 0 })
   // Position of the file being imported within a multi-file batch (1-based),
   // and the batch size — drives the "File 2 of 3" line.
   const currentFile = ref(0)
@@ -130,15 +137,23 @@ export const useAppStore = defineStore('app', () => {
   }
 
   /** A fresh capture replaces the session: it becomes the first source. */
-  function setLoadedFile(path: string, packets: number) {
+  function setLoadedFile(path: string, packets: number, skippedInFile?: SkippedPackets) {
     loadedFile.value = path
     sources.value = [{ path, packets }]
+    skipped.value = skippedInFile ?? { ipv6: 0, arp: 0, other: 0 }
     error.value = null
   }
 
   /** An appended capture joins the existing source list. */
-  function addSource(path: string, packets: number) {
+  function addSource(path: string, packets: number, skippedInFile?: SkippedPackets) {
     sources.value = [...sources.value, { path, packets }]
+    if (skippedInFile) {
+      skipped.value = {
+        ipv6: skipped.value.ipv6 + skippedInFile.ipv6,
+        arp: skipped.value.arp + skippedInFile.arp,
+        other: skipped.value.other + skippedInFile.other,
+      }
+    }
   }
 
   function setError(message: string) {
@@ -160,6 +175,8 @@ export const useAppStore = defineStore('app', () => {
     loading.value = false
     loadedFile.value = null
     sources.value = []
+    skipped.value = { ipv6: 0, arp: 0, other: 0 }
+    findingsCollapsed.value = false
     error.value = null
     importProgress.value = 0
     stage.value = null
@@ -178,6 +195,8 @@ export const useAppStore = defineStore('app', () => {
     importProgress,
     stage,
     dragHovering,
+    findingsCollapsed,
+    skipped,
     currentFile,
     totalFiles,
     displayStage,
