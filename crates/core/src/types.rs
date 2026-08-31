@@ -23,11 +23,30 @@ pub struct Finding {
     pub connection_ids: Vec<i64>,
 }
 
+/// Packets read but not imported, by reason. Lets the UI say *why* a capture
+/// looks thin instead of leaving "0 packets" ambiguous.
+#[derive(Debug, Default, Clone, Copy, Serialize)]
+pub struct SkippedPackets {
+    pub ipv6: usize,
+    pub arp: usize,
+    /// Everything else: non-IP frames, unsupported transports, unreadable
+    /// link types, truncated or undecodable packets.
+    pub other: usize,
+}
+
+impl SkippedPackets {
+    #[must_use]
+    pub fn total(&self) -> usize {
+        self.ipv6 + self.arp + self.other
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ImportResult {
     pub host_count: usize,
     pub connection_count: usize,
     pub packet_count: usize,
+    pub skipped: SkippedPackets,
     pub time_range: (f64, f64),
 }
 
@@ -63,6 +82,14 @@ pub struct Connection {
     pub byte_count: i64,
     pub first_seen: f64,
     pub last_seen: f64,
+}
+
+/// One time-bucket of traffic volume, for the timeline histogram.
+#[derive(Debug, Clone, Serialize)]
+pub struct HistogramBucket {
+    pub start: f64,
+    pub packet_count: i64,
+    pub byte_count: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -129,16 +156,4 @@ pub struct ModbusConversation {
     pub writes: i64,
     pub exceptions: i64,
     pub poll_interval_ms: Option<f64>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct Packet {
-    pub id: i64,
-    pub timestamp: f64,
-    pub src_ip: String,
-    pub dst_ip: String,
-    pub src_port: u16,
-    pub dst_port: u16,
-    pub protocol: String,
-    pub length: i64,
 }

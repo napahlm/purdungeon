@@ -8,8 +8,11 @@ pub fn init_db() -> Result<(Connection, PathBuf), CoreError> {
     let db_path = std::env::temp_dir().join(format!("purdungeon-{}.db", uuid::Uuid::new_v4()));
     let conn = Connection::open(&db_path)?;
 
-    conn.execute_batch("PRAGMA journal_mode=WAL;")?;
-    conn.execute_batch("PRAGMA synchronous=NORMAL;")?;
+    // The database is a disposable per-session temp file, so durability
+    // doesn't matter — but ROLLBACK must still work for failed imports, which
+    // rules out journal_mode=OFF. MEMORY keeps the journal in RAM.
+    conn.execute_batch("PRAGMA journal_mode=MEMORY;")?;
+    conn.execute_batch("PRAGMA synchronous=OFF;")?;
     conn.execute_batch("PRAGMA foreign_keys=OFF;")?;
     conn.execute_batch("PRAGMA cache_size=-64000;")?; // 64MB cache
     conn.execute_batch("PRAGMA temp_store=MEMORY;")?;
@@ -17,7 +20,7 @@ pub fn init_db() -> Result<(Connection, PathBuf), CoreError> {
 
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS hosts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id INTEGER PRIMARY KEY,
             mac_address TEXT NOT NULL,
             ip_address TEXT NOT NULL UNIQUE,
             hostname TEXT,
@@ -35,7 +38,7 @@ pub fn init_db() -> Result<(Connection, PathBuf), CoreError> {
         );
 
         CREATE TABLE IF NOT EXISTS connections (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id INTEGER PRIMARY KEY,
             src_host_id INTEGER NOT NULL,
             dst_host_id INTEGER NOT NULL,
             src_port INTEGER NOT NULL,
@@ -49,19 +52,14 @@ pub fn init_db() -> Result<(Connection, PathBuf), CoreError> {
         );
 
         CREATE TABLE IF NOT EXISTS packets (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id INTEGER PRIMARY KEY,
             connection_id INTEGER NOT NULL,
             timestamp REAL NOT NULL,
-            src_ip TEXT NOT NULL,
-            dst_ip TEXT NOT NULL,
-            src_port INTEGER NOT NULL,
-            dst_port INTEGER NOT NULL,
-            protocol TEXT NOT NULL,
             length INTEGER NOT NULL
         );
 
         CREATE TABLE IF NOT EXISTS modbus_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id INTEGER PRIMARY KEY,
             connection_id INTEGER NOT NULL,
             src_host_id INTEGER NOT NULL,
             dst_host_id INTEGER NOT NULL,
@@ -78,7 +76,7 @@ pub fn init_db() -> Result<(Connection, PathBuf), CoreError> {
         );
 
         CREATE TABLE IF NOT EXISTS findings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id INTEGER PRIMARY KEY,
             kind TEXT NOT NULL,
             severity TEXT NOT NULL,
             title TEXT NOT NULL,
@@ -120,7 +118,10 @@ pub fn drop_packet_indexes(conn: &Connection) -> Result<(), CoreError> {
         "DROP INDEX IF EXISTS idx_packets_timestamp;
          DROP INDEX IF EXISTS idx_packets_connection;
          DROP INDEX IF EXISTS idx_modbus_connection;
-         DROP INDEX IF EXISTS idx_modbus_src_host;",
+         DROP INDEX IF EXISTS idx_modbus_src_host;
+         DROP INDEX IF EXISTS idx_modbus_dst_host;
+         DROP INDEX IF EXISTS idx_connections_hosts;
+         DROP INDEX IF EXISTS idx_connections_dst_host;",
     )?;
     Ok(())
 }
@@ -130,7 +131,10 @@ pub fn create_packet_indexes(conn: &Connection) -> Result<(), CoreError> {
         "CREATE INDEX IF NOT EXISTS idx_packets_timestamp ON packets(timestamp);
          CREATE INDEX IF NOT EXISTS idx_packets_connection ON packets(connection_id);
          CREATE INDEX IF NOT EXISTS idx_modbus_connection ON modbus_events(connection_id);
-         CREATE INDEX IF NOT EXISTS idx_modbus_src_host ON modbus_events(src_host_id);",
+         CREATE INDEX IF NOT EXISTS idx_modbus_src_host ON modbus_events(src_host_id);
+         CREATE INDEX IF NOT EXISTS idx_modbus_dst_host ON modbus_events(dst_host_id);
+         CREATE INDEX IF NOT EXISTS idx_connections_hosts ON connections(src_host_id, dst_host_id);
+         CREATE INDEX IF NOT EXISTS idx_connections_dst_host ON connections(dst_host_id);",
     )?;
     Ok(())
 }

@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 pub use error::CoreError;
 use types::{
     Connection, Finding, Host, HostDetail, ImportResult, ImportStage, ModbusConversation,
-    ModbusHostActivity, Packet,
+    ModbusHostActivity,
 };
 
 /// One imported capture: a temp `SQLite` database plus query access.
@@ -37,17 +37,29 @@ impl Session {
         progress: &AtomicU64,
         on_stage: &(dyn Fn(ImportStage) + Send + Sync),
     ) -> Result<(Self, ImportResult), CoreError> {
-        let (conn, db_path) = store::schema::init_db()?;
-        on_stage(ImportStage::ReadingPackets);
-        let result = ingest::pcap::parse_pcap(pcap_path, &conn, progress)?;
-        analysis::run(&conn, on_stage)?;
-        Ok((
-            Self {
-                conn: Arc::new(Mutex::new(conn)),
-                path: db_path,
-            },
-            result,
-        ))
+        let (mut conn, db_path) = store::schema::init_db()?;
+        let imported = (|| {
+            on_stage(ImportStage::ReadingPackets);
+            let result = ingest::pcap::parse_pcap(pcap_path, &mut conn, progress)?;
+            analysis::run(&conn, on_stage)?;
+            Ok(result)
+        })();
+        match imported {
+            Ok(result) => Ok((
+                Self {
+                    conn: Arc::new(Mutex::new(conn)),
+                    path: db_path,
+                },
+                result,
+            )),
+            // No Session was constructed, so its Drop won't run — remove the
+            // temp database here instead of leaking it.
+            Err(e) => {
+                drop(conn);
+                store::schema::cleanup_db(&db_path);
+                Err(e)
+            }
+        }
     }
 
     /// Merge another capture into this session: parse it into the existing
@@ -61,12 +73,14 @@ impl Session {
         progress: &AtomicU64,
         on_stage: &(dyn Fn(ImportStage) + Send + Sync),
     ) -> Result<ImportResult, CoreError> {
-        self.with_conn(|conn| {
-            on_stage(ImportStage::ReadingPackets);
-            let result = ingest::pcap::append_pcap(pcap_path, conn, progress)?;
-            analysis::run(conn, on_stage)?;
-            Ok(result)
-        })
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|e| CoreError::Internal(e.to_string()))?;
+        on_stage(ImportStage::ReadingPackets);
+        let result = ingest::pcap::append_pcap(pcap_path, &mut conn, progress)?;
+        analysis::run(&conn, on_stage)?;
+        Ok(result)
     }
 
     fn with_conn<T>(
@@ -92,19 +106,23 @@ impl Session {
         self.with_conn(store::queries::get_time_range)
     }
 
-    pub fn host_detail(&self, host_id: i64) -> Result<HostDetail, CoreError> {
-        self.with_conn(|c| store::queries::get_host_detail(c, host_id))
+    /// Traffic volume over time, in `buckets` equal slices of the capture.
+    pub fn traffic_histogram(
+        &self,
+        buckets: usize,
+    ) -> Result<Vec<types::HistogramBucket>, CoreError> {
+        self.with_conn(|c| store::queries::get_traffic_histogram(c, buckets))
     }
 
-    pub fn connection_packets(&self, connection_id: i64, limit: i64) -> Result<Vec<Packet>, CoreError> {
-        self.with_conn(|c| store::queries::get_connection_packets(c, connection_id, limit))
+    pub fn host_detail(&self, host_id: i64) -> Result<HostDetail, CoreError> {
+        self.with_conn(|c| store::queries::get_host_detail(c, host_id))
     }
 
     pub fn save_node_position(&self, host_id: i64, x: f64, y: f64) -> Result<(), CoreError> {
         self.with_conn(|c| store::queries::save_node_position(c, host_id, x, y))
     }
 
-    /// Saved (host_id, x, y) canvas positions for nodes the user has moved.
+    /// Saved `(host_id, x, y)` canvas positions for nodes the user has moved.
     pub fn node_positions(&self) -> Result<Vec<(i64, f64, f64)>, CoreError> {
         self.with_conn(store::queries::get_node_positions)
     }

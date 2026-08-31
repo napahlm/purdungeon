@@ -1,31 +1,27 @@
 use rusqlite::{params, Connection};
 
-use crate::types::{Connection as NetConnection, Host, HostConnection, HostDetail, Packet};
+use crate::types::{Connection as NetConnection, Host, HostConnection, HostDetail};
 use crate::CoreError;
 
-// ── Bulk-import helper: upsert host and return correct id ────────────────────
+// ── Bulk-import helper: insert a first-sighted host and return its id ────────
+//
+// The parser's in-memory host cache (preloaded from the DB on append) is the
+// authority on which hosts exist, so this is a plain insert — a UNIQUE
+// violation here would mean the cache is out of sync and should surface.
 
-pub fn upsert_host_returning_id(
+pub fn insert_host(
     conn: &Connection,
     mac: &str,
     ip: &str,
+    vendor: Option<&str>,
     timestamp: f64,
 ) -> Result<i64, CoreError> {
-    conn.execute(
-        "INSERT INTO hosts (mac_address, ip_address, first_seen, last_seen)
-         VALUES (?1, ?2, ?3, ?3)
-         ON CONFLICT(ip_address) DO UPDATE SET
-            last_seen = MAX(last_seen, ?3),
-            mac_address = CASE WHEN mac_address = '' THEN ?1 ELSE mac_address END",
-        params![mac, ip, timestamp],
-    )?;
-    // last_insert_rowid() returns 0 on conflict-update, so always SELECT
-    let id: i64 = conn.query_row(
-        "SELECT id FROM hosts WHERE ip_address = ?1",
-        params![ip],
-        |row| row.get(0),
-    )?;
-    Ok(id)
+    conn.prepare_cached(
+        "INSERT INTO hosts (mac_address, ip_address, vendor, first_seen, last_seen)
+         VALUES (?1, ?2, ?3, ?4, ?4)",
+    )?
+    .execute(params![mac, ip, vendor, timestamp])?;
+    Ok(conn.last_insert_rowid())
 }
 
 const HOST_COLUMNS: &str = "id, mac_address, ip_address, hostname, vendor, role,
@@ -68,9 +64,8 @@ pub fn get_findings(conn: &Connection) -> Result<Vec<crate::types::Finding>, Cor
          FROM findings
          ORDER BY CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, id",
     )?;
-    let parse_ids = |s: String| -> Vec<i64> {
-        s.split(',').filter_map(|p| p.parse().ok()).collect()
-    };
+    let parse_ids =
+        |s: String| -> Vec<i64> { s.split(',').filter_map(|p| p.parse().ok()).collect() };
     let rows = stmt.query_map([], |row| {
         Ok((
             row.get::<_, i64>(0)?,
@@ -157,6 +152,47 @@ pub fn get_time_range(conn: &Connection) -> Result<(f64, f64), CoreError> {
     Ok(range)
 }
 
+/// Traffic volume over time as a dense array of `buckets` equal slices of the
+/// capture's span — zeros included, so the caller can draw it directly.
+pub fn get_traffic_histogram(
+    conn: &Connection,
+    buckets: usize,
+) -> Result<Vec<crate::types::HistogramBucket>, CoreError> {
+    let (min_ts, max_ts) = get_time_range(conn)?;
+    if buckets == 0 || max_ts <= min_ts {
+        return Ok(Vec::new());
+    }
+    let width = (max_ts - min_ts) / buckets as f64;
+    let mut out: Vec<crate::types::HistogramBucket> = (0..buckets)
+        .map(|i| crate::types::HistogramBucket {
+            start: min_ts + i as f64 * width,
+            packet_count: 0,
+            byte_count: 0,
+        })
+        .collect();
+
+    let mut stmt = conn.prepare(
+        "SELECT CAST((timestamp - ?1) / ?2 AS INTEGER), COUNT(*), COALESCE(SUM(length), 0)
+         FROM packets GROUP BY 1",
+    )?;
+    let rows = stmt.query_map(params![min_ts, width], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, i64>(2)?,
+        ))
+    })?;
+    for row in rows {
+        let (idx, packets, bytes) = row?;
+        // The capture's last timestamp lands exactly on the upper edge —
+        // clamp it into the final bucket.
+        let idx = (idx.max(0) as usize).min(buckets - 1);
+        out[idx].packet_count += packets;
+        out[idx].byte_count += bytes;
+    }
+    Ok(out)
+}
+
 pub fn save_node_position(
     conn: &Connection,
     host_id: i64,
@@ -230,33 +266,4 @@ pub fn get_host_detail(conn: &Connection, host_id: i64) -> Result<HostDetail, Co
         total_packets,
         total_bytes,
     })
-}
-
-pub fn get_connection_packets(
-    conn: &Connection,
-    connection_id: i64,
-    limit: i64,
-) -> Result<Vec<Packet>, CoreError> {
-    let mut stmt = conn.prepare(
-        "SELECT id, timestamp, src_ip, dst_ip, src_port, dst_port, protocol, length
-         FROM packets
-         WHERE connection_id = ?1
-         ORDER BY timestamp ASC
-         LIMIT ?2",
-    )?;
-    let packets: Vec<Packet> = stmt
-        .query_map(params![connection_id, limit], |row| {
-            Ok(Packet {
-                id: row.get(0)?,
-                timestamp: row.get(1)?,
-                src_ip: row.get(2)?,
-                dst_ip: row.get(3)?,
-                src_port: row.get(4)?,
-                dst_port: row.get(5)?,
-                protocol: row.get(6)?,
-                length: row.get(7)?,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(packets)
 }

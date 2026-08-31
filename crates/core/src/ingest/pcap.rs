@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
+use std::net::Ipv4Addr;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -8,16 +9,21 @@ use pcap_parser::traits::PcapReaderIterator;
 use pcap_parser::*;
 use rusqlite::params;
 
-use crate::types::ImportResult;
-use crate::store::{queries, schema};
 use crate::oui;
 use crate::protocols::modbus;
+use crate::store::{queries, schema};
+use crate::types::{ImportResult, SkippedPackets};
 use crate::CoreError;
+
+/// The reader buffer must hold one complete block — a full-snaplen (65535 B)
+/// packet plus block framing — or parsing aborts with a buffer-too-small
+/// error. 1 MB also leaves room for jumbo frames.
+const READER_BUFFER_SIZE: usize = 1 << 20;
 
 /// Parse a capture into a fresh session, clearing any existing data first.
 pub fn parse_pcap(
     path: &Path,
-    conn: &rusqlite::Connection,
+    conn: &mut rusqlite::Connection,
     progress: &AtomicU64,
 ) -> Result<ImportResult, CoreError> {
     ingest(path, conn, progress, false)
@@ -28,15 +34,80 @@ pub fn parse_pcap(
 /// single conversation row rather than duplicating.
 pub fn append_pcap(
     path: &Path,
-    conn: &rusqlite::Connection,
+    conn: &mut rusqlite::Connection,
     progress: &AtomicU64,
 ) -> Result<ImportResult, CoreError> {
     ingest(path, conn, progress, true)
 }
 
+/// Directional flow identity: (src ip, dst ip, src port, dst port, protocol).
+type FlowKey = (u32, u32, u16, u16, u8);
+
+/// IP protocol numbers used as the last element of a `FlowKey`. The DB stores
+/// the display name; these keep the hot-path key free of strings.
+fn protocol_code(protocol: &str) -> u8 {
+    match protocol {
+        "TCP" => 6,
+        "UDP" => 17,
+        "ICMP" => 1,
+        _ => 0,
+    }
+}
+
+/// Per-host aggregate accumulated in memory during a parse and flushed to the
+/// DB once at the end, instead of issuing an UPDATE per packet.
+struct HostAgg {
+    id: i64,
+    first_seen: f64,
+    last_seen: f64,
+}
+
+/// Per-flow aggregate, same idea. `packets`/`bytes` count only this parse —
+/// the flush adds them to whatever the row already holds, so appends compose.
+struct FlowAgg {
+    id: i64,
+    packets: i64,
+    bytes: i64,
+    first_seen: f64,
+    last_seen: f64,
+    tagged: bool,
+    late_tag: Option<&'static str>,
+}
+
+#[derive(Default)]
+struct IngestState {
+    hosts: HashMap<u32, HostAgg>,
+    flows: HashMap<FlowKey, FlowAgg>,
+    packet_count: usize,
+    skipped: SkippedPackets,
+    /// First link type other than Ethernet seen, for the error message when a
+    /// capture yields nothing readable.
+    unsupported_linktype: Option<String>,
+    min_ts: f64,
+    max_ts: f64,
+}
+
+impl IngestState {
+    fn new() -> Self {
+        Self {
+            min_ts: f64::MAX,
+            max_ts: f64::MIN,
+            ..Self::default()
+        }
+    }
+}
+
+fn unsupported_linktype_error(linktype: &str) -> CoreError {
+    CoreError::Parse(format!(
+        "this capture uses link type {linktype}; purdungeon reads Ethernet \
+         captures — convert it with Wireshark or editcap, or re-capture on an \
+         Ethernet interface"
+    ))
+}
+
 fn ingest(
     path: &Path,
-    conn: &rusqlite::Connection,
+    conn: &mut rusqlite::Connection,
     progress: &AtomicU64,
     append: bool,
 ) -> Result<ImportResult, CoreError> {
@@ -52,77 +123,79 @@ fn ingest(
     reader.seek(SeekFrom::Start(0))?;
     let is_pcapng = u32::from_le_bytes(magic) == 0x0A0D_0D0A;
 
+    // One transaction covers everything, the destructive prep included, so a
+    // failed parse leaves the previous session exactly as it was — dropping
+    // the transaction rolls back.
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Exclusive)?;
+
     // A fresh import wipes prior data; an append keeps it and adds to it.
     if !append {
-        schema::clear_data(conn)?;
+        schema::clear_data(&tx)?;
     }
-    schema::drop_packet_indexes(conn)?;
+    schema::drop_packet_indexes(&tx)?;
 
-    // Single transaction for the entire ingest
-    conn.execute_batch("BEGIN EXCLUSIVE")?;
-
-    let mut host_map: HashMap<String, i64> = HashMap::new();
-    let mut conn_map: HashMap<String, (i64, bool)> = HashMap::new();
+    let mut state = IngestState::new();
     // On append, seed the caches from existing rows so the same host or flow
     // resolves to its existing id instead of being inserted again.
     if append {
-        if let Err(e) = preload_caches(conn, &mut host_map, &mut conn_map) {
-            let _ = conn.execute_batch("ROLLBACK");
-            return Err(e);
+        preload_caches(&tx, &mut state)?;
+    }
+
+    if is_pcapng {
+        parse_pcapng_data(reader, &tx, &mut state, progress)?;
+    } else {
+        parse_legacy_data(reader, &tx, &mut state, progress)?;
+    }
+
+    // A capture that only contained unreadable link types should say so
+    // rather than silently import as empty.
+    if state.packet_count == 0 {
+        if let Some(linktype) = &state.unsupported_linktype {
+            return Err(unsupported_linktype_error(linktype));
         }
     }
-    let mut packet_count: usize = 0;
-    let mut min_ts: f64 = f64::MAX;
-    let mut max_ts: f64 = f64::MIN;
 
-    let result = if is_pcapng {
-        parse_pcapng_data(
-            reader, conn, &mut host_map, &mut conn_map,
-            &mut packet_count, &mut min_ts, &mut max_ts, progress,
-        )
-    } else {
-        parse_legacy_data(
-            reader, conn, &mut host_map, &mut conn_map,
-            &mut packet_count, &mut min_ts, &mut max_ts, progress,
-        )
-    };
-
-    if let Err(e) = result {
-        let _ = conn.execute_batch("ROLLBACK");
-        return Err(e);
-    }
+    flush_aggregates(&tx, &state)?;
 
     // Recreate indexes after all data is inserted
-    schema::create_packet_indexes(conn)?;
+    schema::create_packet_indexes(&tx)?;
+    tx.commit()?;
 
-    conn.execute_batch("COMMIT")?;
-
-    if packet_count == 0 {
-        min_ts = 0.0;
-        max_ts = 0.0;
+    if state.min_ts > state.max_ts {
+        state.min_ts = 0.0;
+        state.max_ts = 0.0;
     }
 
     Ok(ImportResult {
-        host_count: host_map.len(),
-        connection_count: conn_map.len(),
-        packet_count,
-        time_range: (min_ts, max_ts),
+        host_count: state.hosts.len(),
+        connection_count: state.flows.len(),
+        packet_count: state.packet_count,
+        skipped: state.skipped,
+        time_range: (state.min_ts, state.max_ts),
     })
 }
 
-/// Rebuild the host and connection caches from the session so an append reuses
-/// existing ids. `host_map` keys on IP; `conn_map` keys on the same flow key
-/// the parser builds (`src:port-dst:port-proto`).
-fn preload_caches(
-    conn: &rusqlite::Connection,
-    host_map: &mut HashMap<String, i64>,
-    conn_map: &mut HashMap<String, (i64, bool)>,
-) -> Result<(), CoreError> {
+/// Rebuild the host and flow caches from the session so an append reuses
+/// existing ids. Aggregates start empty — the flush only adds what this
+/// parse contributes on top of the stored rows.
+fn preload_caches(conn: &rusqlite::Connection, state: &mut IngestState) -> Result<(), CoreError> {
     let mut stmt = conn.prepare("SELECT ip_address, id FROM hosts")?;
-    let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    })?;
     for row in rows {
         let (ip, id) = row?;
-        host_map.insert(ip, id);
+        let Ok(addr) = ip.parse::<Ipv4Addr>() else {
+            continue;
+        };
+        state.hosts.insert(
+            u32::from(addr),
+            HostAgg {
+                id,
+                first_seen: f64::MAX,
+                last_seen: f64::MIN,
+            },
+        );
     }
 
     let mut stmt = conn.prepare(
@@ -144,53 +217,134 @@ fn preload_caches(
     })?;
     for row in rows {
         let (id, src_ip, src_port, dst_ip, dst_port, protocol, app_protocol) = row?;
-        let flow_key = format!("{src_ip}:{src_port}-{dst_ip}:{dst_port}-{protocol}");
-        conn_map.insert(flow_key, (id, app_protocol.is_some()));
+        let (Ok(src), Ok(dst)) = (src_ip.parse::<Ipv4Addr>(), dst_ip.parse::<Ipv4Addr>()) else {
+            continue;
+        };
+        let key = (
+            u32::from(src),
+            u32::from(dst),
+            src_port,
+            dst_port,
+            protocol_code(&protocol),
+        );
+        state.flows.insert(
+            key,
+            FlowAgg {
+                id,
+                packets: 0,
+                bytes: 0,
+                first_seen: f64::MAX,
+                last_seen: f64::MIN,
+                tagged: app_protocol.is_some(),
+                late_tag: None,
+            },
+        );
     }
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Write the accumulated per-host and per-flow aggregates in one pass.
+/// Untouched entries (preloaded on append but not seen in this file) are
+/// skipped so an append only writes what changed.
+fn flush_aggregates(conn: &rusqlite::Connection, state: &IngestState) -> Result<(), CoreError> {
+    let mut host_stmt = conn.prepare_cached(
+        "UPDATE hosts SET
+            first_seen = MIN(first_seen, ?1),
+            last_seen = MAX(last_seen, ?2)
+         WHERE id = ?3",
+    )?;
+    for agg in state.hosts.values() {
+        if agg.first_seen <= agg.last_seen {
+            host_stmt.execute(params![agg.first_seen, agg.last_seen, agg.id])?;
+        }
+    }
+
+    let mut flow_stmt = conn.prepare_cached(
+        "UPDATE connections SET
+            packet_count = packet_count + ?1,
+            byte_count = byte_count + ?2,
+            first_seen = MIN(first_seen, ?3),
+            last_seen = MAX(last_seen, ?4)
+         WHERE id = ?5",
+    )?;
+    let mut tag_stmt =
+        conn.prepare_cached("UPDATE connections SET app_protocol = ?1 WHERE id = ?2")?;
+    for agg in state.flows.values() {
+        if agg.packets > 0 {
+            flow_stmt.execute(params![
+                agg.packets,
+                agg.bytes,
+                agg.first_seen,
+                agg.last_seen,
+                agg.id
+            ])?;
+        }
+        if let Some(tag) = agg.late_tag {
+            tag_stmt.execute(params![tag, agg.id])?;
+        }
+    }
+    Ok(())
+}
+
+/// Per-interface decoding parameters from an Interface Description Block.
+struct IfaceInfo {
+    ts_offset: u64,
+    resolution: u64,
+    linktype: Linktype,
+}
+
 fn parse_pcapng_data<R: Read>(
     source: R,
     conn: &rusqlite::Connection,
-    host_map: &mut HashMap<String, i64>,
-    conn_map: &mut HashMap<String, (i64, bool)>,
-    packet_count: &mut usize,
-    min_ts: &mut f64,
-    max_ts: &mut f64,
+    state: &mut IngestState,
     progress: &AtomicU64,
 ) -> Result<(), CoreError> {
-    let mut reader = PcapNGReader::new(65536, source)
+    let mut reader = PcapNGReader::new(READER_BUFFER_SIZE, source)
         .map_err(|e| CoreError::Parse(format!("pcapng reader: {e}")))?;
 
-    let mut if_info: Vec<(u64, u64)> = Vec::new();
+    let mut if_info: Vec<IfaceInfo> = Vec::new();
 
     loop {
         match reader.next() {
             Ok((offset, block)) => {
                 match block {
+                    // Interface ids are scoped to their section, so a new
+                    // section (mergecap output, rotated captures) starts a
+                    // fresh interface table.
+                    PcapBlockOwned::NG(Block::SectionHeader(_)) => {
+                        if_info.clear();
+                    }
                     PcapBlockOwned::NG(Block::InterfaceDescription(idb)) => {
-                        let resolution = idb.ts_resolution().unwrap_or(1_000_000);
-                        let ts_offset = idb.if_tsoffset as u64;
-                        if_info.push((ts_offset, resolution));
+                        if_info.push(IfaceInfo {
+                            ts_offset: idb.if_tsoffset as u64,
+                            resolution: idb.ts_resolution().unwrap_or(1_000_000),
+                            linktype: idb.linktype,
+                        });
                     }
                     PcapBlockOwned::NG(Block::EnhancedPacket(epb)) => {
-                        let (ts_offset, resolution) = if_info
-                            .get(epb.if_id as usize)
-                            .copied()
-                            .unwrap_or((0, 1_000_000));
-                        let ts = epb.decode_ts_f64(ts_offset, resolution);
-                        process_packet(
-                            epb.data, ts, conn, host_map, conn_map,
-                            packet_count, min_ts, max_ts,
-                        )?;
+                        let info = if_info.get(epb.if_id as usize);
+                        let linktype = info.map_or(Linktype::ETHERNET, |i| i.linktype);
+                        if linktype == Linktype::ETHERNET {
+                            let (ts_offset, resolution) =
+                                info.map_or((0, 1_000_000), |i| (i.ts_offset, i.resolution));
+                            let ts = epb.decode_ts_f64(ts_offset, resolution);
+                            let orig_len = epb.origlen.max(epb.caplen);
+                            // EPB data is padded to a 32-bit boundary; the
+                            // real capture length is caplen.
+                            let data = epb.data.get(..epb.caplen as usize).unwrap_or(epb.data);
+                            process_packet(data, orig_len, ts, conn, state)?;
+                        } else {
+                            state.skipped.other += 1;
+                            state
+                                .unsupported_linktype
+                                .get_or_insert_with(|| linktype.to_string());
+                        }
                     }
-                    PcapBlockOwned::NG(Block::SimplePacket(spb)) => {
-                        process_packet(
-                            spb.data, 0.0, conn, host_map, conn_map,
-                            packet_count, min_ts, max_ts,
-                        )?;
+                    // Simple Packet Blocks carry no timestamp; inventing one
+                    // would poison first/last-seen, so they are skipped and
+                    // counted instead.
+                    PcapBlockOwned::NG(Block::SimplePacket(_)) => {
+                        state.skipped.other += 1;
                     }
                     _ => {}
                 }
@@ -209,29 +363,37 @@ fn parse_pcapng_data<R: Read>(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn parse_legacy_data<R: Read>(
     source: R,
     conn: &rusqlite::Connection,
-    host_map: &mut HashMap<String, i64>,
-    conn_map: &mut HashMap<String, (i64, bool)>,
-    packet_count: &mut usize,
-    min_ts: &mut f64,
-    max_ts: &mut f64,
+    state: &mut IngestState,
     progress: &AtomicU64,
 ) -> Result<(), CoreError> {
-    let mut reader = LegacyPcapReader::new(65536, source)
+    let mut reader = LegacyPcapReader::new(READER_BUFFER_SIZE, source)
         .map_err(|e| CoreError::Parse(format!("pcap reader: {e}")))?;
+
+    // tcpdump's nanosecond variant (magic 0xa1b23c4d) stores nanoseconds in
+    // the sub-second field; everything else stores microseconds.
+    let mut ts_divisor = 1_000_000.0;
 
     loop {
         match reader.next() {
             Ok((offset, block)) => {
-                if let PcapBlockOwned::Legacy(packet) = block {
-                    let ts = f64::from(packet.ts_sec) + f64::from(packet.ts_usec) / 1_000_000.0;
-                    process_packet(
-                        packet.data, ts, conn, host_map, conn_map,
-                        packet_count, min_ts, max_ts,
-                    )?;
+                match block {
+                    PcapBlockOwned::LegacyHeader(header) => {
+                        if header.network != Linktype::ETHERNET {
+                            return Err(unsupported_linktype_error(&header.network.to_string()));
+                        }
+                        if header.is_nanosecond_precision() {
+                            ts_divisor = 1_000_000_000.0;
+                        }
+                    }
+                    PcapBlockOwned::Legacy(packet) => {
+                        let ts = f64::from(packet.ts_sec) + f64::from(packet.ts_usec) / ts_divisor;
+                        let orig_len = packet.origlen.max(packet.caplen);
+                        process_packet(packet.data, orig_len, ts, conn, state)?;
+                    }
+                    PcapBlockOwned::NG(_) => {}
                 }
                 reader.consume(offset);
                 progress.fetch_add(offset as u64, Ordering::Relaxed);
@@ -248,36 +410,46 @@ fn parse_legacy_data<R: Read>(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Decode one Ethernet frame and fold it into the session. `orig_len` is the
+/// packet's length on the wire — captures taken with a snaplen truncate
+/// `data`, and byte counts must reflect the wire, not the truncation.
 fn process_packet(
     data: &[u8],
+    orig_len: u32,
     timestamp: f64,
     conn: &rusqlite::Connection,
-    host_map: &mut HashMap<String, i64>,
-    conn_map: &mut HashMap<String, (i64, bool)>,
-    packet_count: &mut usize,
-    min_ts: &mut f64,
-    max_ts: &mut f64,
+    state: &mut IngestState,
 ) -> Result<(), CoreError> {
-    let Ok(parsed) = etherparse::SlicedPacket::from_ethernet(data) else {
+    if data.len() < 14 {
+        state.skipped.other += 1;
         return Ok(());
-    };
-
-    let (src_mac, dst_mac) = if data.len() >= 14 {
-        (format_mac(&data[6..12]), format_mac(&data[0..6]))
-    } else {
+    }
+    // Lax parsing tolerates snaplen truncation: headers still decode and the
+    // payload is whatever was captured, instead of dropping the packet.
+    let Ok(parsed) = etherparse::LaxSlicedPacket::from_ethernet(data) else {
+        state.skipped.other += 1;
         return Ok(());
     };
 
     let (src_ip, dst_ip) = match &parsed.net {
-        Some(etherparse::NetSlice::Ipv4(ipv4)) => {
+        Some(etherparse::LaxNetSlice::Ipv4(ipv4)) => {
             let h = ipv4.header();
-            (
-                format!("{}", h.source_addr()),
-                format!("{}", h.destination_addr()),
-            )
+            (u32::from(h.source_addr()), u32::from(h.destination_addr()))
         }
-        _ => return Ok(()),
+        Some(etherparse::LaxNetSlice::Ipv6(_)) => {
+            state.skipped.ipv6 += 1;
+            return Ok(());
+        }
+        None => {
+            // 0x0806 is the ARP ethertype — worth its own count because
+            // ARP-only devices are invisible to an IPv4-based inventory.
+            if data[12..14] == [0x08, 0x06] {
+                state.skipped.arp += 1;
+            } else {
+                state.skipped.other += 1;
+            }
+            return Ok(());
+        }
     };
 
     let (src_port, dst_port, protocol, payload): (u16, u16, &str, &[u8]) = match &parsed.transport {
@@ -294,43 +466,46 @@ fn process_packet(
             udp.payload(),
         ),
         Some(etherparse::TransportSlice::Icmpv4(_)) => (0, 0, "ICMP", &[] as &[u8]),
-        _ => return Ok(()),
+        _ => {
+            state.skipped.other += 1;
+            return Ok(());
+        }
     };
 
+    let is_modbus_request = dst_port == modbus::MODBUS_PORT;
     let modbus_frames = if protocol == "TCP" && modbus::is_modbus_tcp(src_port, dst_port, payload) {
-        modbus::parse_frames(payload, dst_port == modbus::MODBUS_PORT)
+        modbus::parse_frames(payload, is_modbus_request)
     } else {
         Vec::new()
     };
     let app_protocol = if modbus_frames.is_empty() {
         None
     } else {
-        Some("modbus".to_string())
+        Some("modbus")
     };
 
     if timestamp > 0.0 {
-        if timestamp < *min_ts {
-            *min_ts = timestamp;
+        if timestamp < state.min_ts {
+            state.min_ts = timestamp;
         }
-        if timestamp > *max_ts {
-            *max_ts = timestamp;
+        if timestamp > state.max_ts {
+            state.max_ts = timestamp;
         }
     }
 
-    // Upsert hosts — in-memory cache avoids repeated DB calls
-    let src_host_id = upsert_host(conn, host_map, &src_ip, &src_mac, timestamp)?;
-    let dst_host_id = upsert_host(conn, host_map, &dst_ip, &dst_mac, timestamp)?;
+    // Hosts and flows accumulate in memory; only first sight touches the DB.
+    let src_host_id = upsert_host(conn, state, src_ip, &data[6..12], timestamp)?;
+    let dst_host_id = upsert_host(conn, state, dst_ip, &data[0..6], timestamp)?;
 
-    // Upsert connection — in-memory cache for the common case
-    let flow_key = format!("{src_ip}:{src_port}-{dst_ip}:{dst_port}-{protocol}");
+    let flow_key = (src_ip, dst_ip, src_port, dst_port, protocol_code(protocol));
     let conn_id = upsert_connection(
         conn,
-        conn_map,
+        state,
         flow_key,
         (src_host_id, dst_host_id, src_port, dst_port),
         protocol,
-        app_protocol.as_deref(),
-        data.len() as i64,
+        app_protocol,
+        i64::from(orig_len),
         timestamp,
     )?;
 
@@ -340,65 +515,75 @@ fn process_packet(
         src_host_id,
         dst_host_id,
         timestamp,
-        dst_port == modbus::MODBUS_PORT,
+        is_modbus_request,
         &modbus_frames,
     )?;
 
-    // Insert packet using cached prepared statement
     conn.prepare_cached(
-        "INSERT INTO packets (connection_id, timestamp, src_ip, dst_ip, src_port, dst_port, protocol, length)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        "INSERT INTO packets (connection_id, timestamp, length) VALUES (?1, ?2, ?3)",
     )?
-    .execute(params![conn_id, timestamp, &src_ip, &dst_ip, src_port, dst_port, protocol, data.len() as i64])?;
+    .execute(params![conn_id, timestamp, i64::from(orig_len)])?;
 
-    *packet_count += 1;
+    state.packet_count += 1;
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn upsert_connection(
     conn: &rusqlite::Connection,
-    conn_map: &mut HashMap<String, (i64, bool)>,
-    flow_key: String,
+    state: &mut IngestState,
+    flow_key: FlowKey,
     (src_host_id, dst_host_id, src_port, dst_port): (i64, i64, u16, u16),
     protocol: &str,
-    app_protocol: Option<&str>,
+    app_protocol: Option<&'static str>,
     packet_len: i64,
     timestamp: f64,
 ) -> Result<i64, CoreError> {
-    if let Some(entry) = conn_map.get_mut(&flow_key) {
-        let (id, tagged) = *entry;
-        conn.prepare_cached(
-            "UPDATE connections SET
-                packet_count = packet_count + 1,
-                byte_count = byte_count + ?1,
-                first_seen = MIN(first_seen, ?2),
-                last_seen = MAX(last_seen, ?2)
-             WHERE id = ?3",
-        )?
-        .execute(params![packet_len, timestamp, id])?;
+    if let Some(agg) = state.flows.get_mut(&flow_key) {
+        agg.packets += 1;
+        agg.bytes += packet_len;
+        agg.first_seen = agg.first_seen.min(timestamp);
+        agg.last_seen = agg.last_seen.max(timestamp);
         // A TCP flow opens with an empty SYN, so the app protocol is only
         // recognizable once payload arrives — tag the flow late.
-        if !tagged && app_protocol.is_some() {
-            conn.prepare_cached("UPDATE connections SET app_protocol = ?1 WHERE id = ?2")?
-                .execute(params![app_protocol, id])?;
-            entry.1 = true;
+        if !agg.tagged {
+            if let Some(tag) = app_protocol {
+                agg.late_tag = Some(tag);
+                agg.tagged = true;
+            }
         }
-        return Ok(id);
+        return Ok(agg.id);
     }
 
+    // Counts start at zero: the flush adds this parse's aggregate on top.
     conn.prepare_cached(
         "INSERT INTO connections
             (src_host_id, dst_host_id, src_port, dst_port, protocol, app_protocol,
              packet_count, byte_count, first_seen, last_seen)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7, ?8, ?8)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, 0, ?7, ?7)",
     )?
     .execute(params![
-        src_host_id, dst_host_id, src_port, dst_port,
-        protocol, app_protocol,
-        packet_len, timestamp,
+        src_host_id,
+        dst_host_id,
+        src_port,
+        dst_port,
+        protocol,
+        app_protocol,
+        timestamp,
     ])?;
     let id = conn.last_insert_rowid();
-    conn_map.insert(flow_key, (id, app_protocol.is_some()));
+    state.flows.insert(
+        flow_key,
+        FlowAgg {
+            id,
+            packets: 1,
+            bytes: packet_len,
+            first_seen: timestamp,
+            last_seen: timestamp,
+            tagged: app_protocol.is_some(),
+            late_tag: None,
+        },
+    );
     Ok(id)
 }
 
@@ -438,36 +623,44 @@ fn insert_modbus_events(
     Ok(())
 }
 
+/// Return the host's id, inserting it on first sight. The MAC string, vendor
+/// lookup, and IP formatting only happen on that first sight — never in the
+/// per-packet hot path.
 fn upsert_host(
     conn: &rusqlite::Connection,
-    host_map: &mut HashMap<String, i64>,
-    ip: &str,
-    mac: &str,
+    state: &mut IngestState,
+    ip: u32,
+    mac_bytes: &[u8],
     timestamp: f64,
 ) -> Result<i64, CoreError> {
-    if let Some(&id) = host_map.get(ip) {
-        conn.prepare_cached(
-            "UPDATE hosts SET
-                first_seen = MIN(first_seen, ?1),
-                last_seen = MAX(last_seen, ?1)
-             WHERE id = ?2",
-        )?
-        .execute(params![timestamp, id])?;
-        return Ok(id);
+    if let Some(agg) = state.hosts.get_mut(&ip) {
+        agg.first_seen = agg.first_seen.min(timestamp);
+        agg.last_seen = agg.last_seen.max(timestamp);
+        return Ok(agg.id);
     }
-    let id = queries::upsert_host_returning_id(conn, mac, ip, timestamp)?;
-    if let Some(vendor) = oui::lookup_vendor(mac) {
-        conn.prepare_cached("UPDATE hosts SET vendor = ?1 WHERE id = ?2 AND vendor IS NULL")?
-            .execute(params![vendor, id])?;
-    }
-    host_map.insert(ip.to_string(), id);
+    let ip_str = Ipv4Addr::from(ip).to_string();
+    let mac = format_mac(mac_bytes);
+    let vendor = oui::lookup_vendor(mac_bytes);
+    let id = queries::insert_host(conn, &mac, &ip_str, vendor, timestamp)?;
+    state.hosts.insert(
+        ip,
+        HostAgg {
+            id,
+            first_seen: timestamp,
+            last_seen: timestamp,
+        },
+    );
     Ok(id)
 }
 
 fn format_mac(bytes: &[u8]) -> String {
-    bytes
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect::<Vec<_>>()
-        .join(":")
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(bytes.len() * 3);
+    for (i, b) in bytes.iter().enumerate() {
+        if i > 0 {
+            out.push(':');
+        }
+        let _ = write!(out, "{b:02x}");
+    }
+    out
 }
