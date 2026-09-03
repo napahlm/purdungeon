@@ -1,219 +1,15 @@
-//! End-to-end test of the headless core: build a small legacy pcap with real
-//! Modbus TCP exchanges, import it, and check discovery results.
+//! End-to-end tests of the headless core: build small captures with real
+//! Modbus TCP exchanges (and every other kind of frame the reader handles),
+//! import them, and check discovery results and frame accounting.
+
+mod common;
 
 use std::sync::atomic::AtomicU64;
 
+use common::identity::*;
+use common::*;
+use etherparse::IpNumber;
 use purdungeon_core::Session;
-
-const SCADA_MAC: [u8; 6] = [0x00, 0x0c, 0x29, 0x11, 0x22, 0x33];
-// 00:1b:1b is a Siemens prefix in the bundled OUI table
-const PLC_MAC: [u8; 6] = [0x00, 0x1b, 0x1b, 0x44, 0x55, 0x66];
-const SCADA_IP: [u8; 4] = [192, 168, 10, 100];
-const PLC_A_IP: [u8; 4] = [192, 168, 10, 1];
-const PLC_B_IP: [u8; 4] = [192, 168, 10, 2];
-const PLC_C_IP: [u8; 4] = [192, 168, 10, 3];
-
-fn mbap(tid: u16, unit: u8, pdu: &[u8]) -> Vec<u8> {
-    let mut buf = Vec::new();
-    buf.extend_from_slice(&tid.to_be_bytes());
-    buf.extend_from_slice(&[0x00, 0x00]);
-    buf.extend_from_slice(&((pdu.len() as u16 + 1).to_be_bytes()));
-    buf.push(unit);
-    buf.extend_from_slice(pdu);
-    buf
-}
-
-fn tcp_packet(
-    src_mac: [u8; 6],
-    dst_mac: [u8; 6],
-    src_ip: [u8; 4],
-    dst_ip: [u8; 4],
-    src_port: u16,
-    dst_port: u16,
-    payload: &[u8],
-) -> Vec<u8> {
-    let builder = etherparse::PacketBuilder::ethernet2(src_mac, dst_mac)
-        .ipv4(src_ip, dst_ip, 64)
-        .tcp(src_port, dst_port, 1000, 64240);
-    let mut out = Vec::with_capacity(builder.size(payload.len()));
-    builder.write(&mut out, payload).unwrap();
-    out
-}
-
-const MAGIC_MICROS: u32 = 0xa1b2_c3d4;
-const MAGIC_NANOS: u32 = 0xa1b2_3c4d;
-
-/// Minimal legacy pcap writer: global header + per-packet records. The magic
-/// selects micro- vs nanosecond sub-second fields; `snaplen` truncates the
-/// stored bytes while keeping the original length in the record header.
-fn write_pcap_ex(
-    packets: &[(f64, Vec<u8>)],
-    magic: u32,
-    linktype: u32,
-    snaplen: Option<usize>,
-) -> Vec<u8> {
-    let subsec_scale = if magic == MAGIC_NANOS {
-        1_000_000_000.0
-    } else {
-        1_000_000.0
-    };
-    let mut buf = Vec::new();
-    buf.extend_from_slice(&magic.to_le_bytes());
-    buf.extend_from_slice(&2u16.to_le_bytes()); // major
-    buf.extend_from_slice(&4u16.to_le_bytes()); // minor
-    buf.extend_from_slice(&0i32.to_le_bytes()); // thiszone
-    buf.extend_from_slice(&0u32.to_le_bytes()); // sigfigs
-    buf.extend_from_slice(&(snaplen.unwrap_or(65535) as u32).to_le_bytes());
-    buf.extend_from_slice(&linktype.to_le_bytes());
-    for (ts, data) in packets {
-        let secs = ts.trunc() as u32;
-        let subsec = (ts.fract() * subsec_scale) as u32;
-        let incl = snaplen.map_or(data.len(), |s| s.min(data.len()));
-        buf.extend_from_slice(&secs.to_le_bytes());
-        buf.extend_from_slice(&subsec.to_le_bytes());
-        buf.extend_from_slice(&(incl as u32).to_le_bytes());
-        buf.extend_from_slice(&(data.len() as u32).to_le_bytes()); // orig_len
-        buf.extend_from_slice(&data[..incl]);
-    }
-    buf
-}
-
-fn write_pcap(packets: &[(f64, Vec<u8>)]) -> Vec<u8> {
-    write_pcap_ex(packets, MAGIC_MICROS, 1, None)
-}
-
-// ── Minimal pcapng writer: SHB + IDB + EPB/SPB blocks ───────────────────────
-
-fn png_block(block_type: u32, body: &[u8]) -> Vec<u8> {
-    let padded = body.len().div_ceil(4) * 4;
-    let total = (12 + padded) as u32;
-    let mut b = Vec::new();
-    b.extend_from_slice(&block_type.to_le_bytes());
-    b.extend_from_slice(&total.to_le_bytes());
-    b.extend_from_slice(body);
-    b.resize(8 + padded, 0);
-    b.extend_from_slice(&total.to_le_bytes());
-    b
-}
-
-fn png_shb() -> Vec<u8> {
-    let mut body = Vec::new();
-    body.extend_from_slice(&0x1A2B_3C4D_u32.to_le_bytes()); // byte-order magic
-    body.extend_from_slice(&1u16.to_le_bytes()); // major
-    body.extend_from_slice(&0u16.to_le_bytes()); // minor
-    body.extend_from_slice(&(-1i64).to_le_bytes()); // section length: unknown
-    png_block(0x0A0D_0D0A, &body)
-}
-
-fn png_idb(linktype: u16) -> Vec<u8> {
-    let mut body = Vec::new();
-    body.extend_from_slice(&linktype.to_le_bytes());
-    body.extend_from_slice(&0u16.to_le_bytes()); // reserved
-    body.extend_from_slice(&0u32.to_le_bytes()); // snaplen: unlimited
-    png_block(0x0000_0001, &body)
-}
-
-/// Enhanced Packet Block on interface 0 with a microsecond timestamp
-/// (the IDB above carries no `if_tsresol` option, so 1 µs is the default).
-fn png_epb(ts_micros: u64, data: &[u8]) -> Vec<u8> {
-    let mut body = Vec::new();
-    body.extend_from_slice(&0u32.to_le_bytes()); // if_id
-    body.extend_from_slice(&((ts_micros >> 32) as u32).to_le_bytes());
-    body.extend_from_slice(&((ts_micros & 0xFFFF_FFFF) as u32).to_le_bytes());
-    body.extend_from_slice(&(data.len() as u32).to_le_bytes()); // caplen
-    body.extend_from_slice(&(data.len() as u32).to_le_bytes()); // origlen
-    body.extend_from_slice(data);
-    png_block(0x0000_0006, &body)
-}
-
-fn png_spb(data: &[u8]) -> Vec<u8> {
-    let mut body = Vec::new();
-    body.extend_from_slice(&(data.len() as u32).to_le_bytes()); // origlen
-    body.extend_from_slice(data);
-    png_block(0x0000_0003, &body)
-}
-
-/// A second capture: the SCADA keeps polling PLC A (an overlapping flow that
-/// must fuse) and a new HMI appears polling a new PLC D.
-const HMI_MAC: [u8; 6] = [0x00, 0x0c, 0x29, 0xaa, 0xbb, 0xcc];
-const HMI_IP: [u8; 4] = [192, 168, 10, 50];
-const PLC_D_IP: [u8; 4] = [192, 168, 10, 4];
-
-fn follow_up_capture() -> Vec<(f64, Vec<u8>)> {
-    let mut packets = Vec::new();
-    let mut ts = 1_700_000_100.0;
-    let mut tid: u16 = 1;
-    for _ in 0..5 {
-        // SCADA → PLC A on the same flow tuple as the first capture (port 49000)
-        let req = mbap(tid, 1, &[0x03, 0x00, 0x00, 0x00, 0x0A]);
-        packets.push((
-            ts,
-            tcp_packet(SCADA_MAC, PLC_MAC, SCADA_IP, PLC_A_IP, 49000, 502, &req),
-        ));
-        // New HMI → new PLC D
-        let req2 = mbap(tid, 1, &[0x03, 0x00, 0x00, 0x00, 0x0A]);
-        packets.push((
-            ts + 0.01,
-            tcp_packet(HMI_MAC, PLC_MAC, HMI_IP, PLC_D_IP, 50000, 502, &req2),
-        ));
-        tid = tid.wrapping_add(1);
-        ts += 1.0;
-    }
-    packets
-}
-
-fn polling_capture() -> Vec<(f64, Vec<u8>)> {
-    let mut packets = Vec::new();
-    let mut ts = 1_700_000_000.0;
-    let mut tid: u16 = 1;
-
-    // SCADA polls three PLCs once a second; writes a coil on PLC A sometimes
-    for round in 0..10 {
-        for (i, plc_ip) in [PLC_A_IP, PLC_B_IP, PLC_C_IP].iter().enumerate() {
-            let port = 49000 + i as u16;
-            // Read holding registers request
-            let req = mbap(tid, 1, &[0x03, 0x00, 0x00, 0x00, 0x0A]);
-            packets.push((
-                ts,
-                tcp_packet(SCADA_MAC, PLC_MAC, SCADA_IP, *plc_ip, port, 502, &req),
-            ));
-            // Response with 10 registers
-            let mut body = vec![0x03, 0x14];
-            body.extend_from_slice(&[0u8; 20]);
-            let resp = mbap(tid, 1, &body);
-            packets.push((
-                ts + 0.01,
-                tcp_packet(PLC_MAC, SCADA_MAC, *plc_ip, SCADA_IP, 502, port, &resp),
-            ));
-            tid = tid.wrapping_add(1);
-        }
-        if round % 3 == 0 {
-            // Write single coil to PLC A
-            let req = mbap(tid, 1, &[0x05, 0x00, 0x10, 0xFF, 0x00]);
-            packets.push((
-                ts + 0.02,
-                tcp_packet(SCADA_MAC, PLC_MAC, SCADA_IP, PLC_A_IP, 49000, 502, &req),
-            ));
-            tid = tid.wrapping_add(1);
-        }
-        ts += 1.0;
-    }
-    packets
-}
-
-/// Write capture bytes to a temp file, import them, and clean the file up.
-fn import_bytes(
-    tag: &str,
-    bytes: &[u8],
-) -> Result<(Session, purdungeon_core::types::ImportResult), purdungeon_core::CoreError> {
-    let path =
-        std::env::temp_dir().join(format!("purdungeon-test-{tag}-{}.pcap", std::process::id()));
-    std::fs::write(&path, bytes).unwrap();
-    let progress = AtomicU64::new(0);
-    let result = Session::import(&path, &progress, &|_| {});
-    std::fs::remove_file(&path).ok();
-    result
-}
 
 #[test]
 fn import_discovers_roles_and_modbus_activity() {
@@ -229,10 +25,13 @@ fn import_discovers_roles_and_modbus_activity() {
     })
     .unwrap();
     std::fs::remove_file(&path).ok();
+    assert_reconciles(&result);
 
     // Four hosts (scada + 3 plcs), all packets read
     assert_eq!(result.host_count, 4);
     assert!(result.packet_count >= 60);
+    assert_eq!(result.decoded.ipv4, result.packet_count);
+    assert_eq!(result.skipped.total(), 0);
 
     // All import stages fired, in order
     let stages = stages.lock().unwrap();
@@ -241,11 +40,11 @@ fn import_discovers_roles_and_modbus_activity() {
     let hosts = session.hosts().unwrap();
     let scada = hosts
         .iter()
-        .find(|h| h.ip_address == "192.168.10.100")
+        .find(|h| h.ip_address.as_deref() == Some("192.168.10.100"))
         .unwrap();
     let plc_a = hosts
         .iter()
-        .find(|h| h.ip_address == "192.168.10.1")
+        .find(|h| h.ip_address.as_deref() == Some("192.168.10.1"))
         .unwrap();
 
     // Polls 3 devices → scada at level 2; answers on 502 → plc at level 1
@@ -255,6 +54,7 @@ fn import_discovers_roles_and_modbus_activity() {
     assert_eq!(plc_a.purdue_level, Some(1));
     assert_eq!(plc_a.vendor.as_deref(), Some("Siemens"));
     assert!(scada.protocols.contains("modbus"));
+    assert_eq!(plc_a.link_protocols, "");
 
     // Modbus flows got tagged even though connection rows opened untagged
     let connections = session.connections().unwrap();
@@ -264,6 +64,7 @@ fn import_discovers_roles_and_modbus_activity() {
             .any(|c| c.app_protocol.as_deref() == Some("modbus")),
         "no modbus-tagged connections"
     );
+    assert!(connections.iter().all(|c| c.vlan_id.is_none()));
 
     // Findings: the coil writes and the cleartext note should both surface
     let findings = session.findings().unwrap();
@@ -278,16 +79,8 @@ fn import_discovers_roles_and_modbus_activity() {
 
 #[test]
 fn add_capture_merges_hosts_and_fuses_flows() {
-    let dir = std::env::temp_dir();
-    let pid = std::process::id();
-
-    let pcap_a = write_pcap(&polling_capture());
-    let path_a = dir.join(format!("purdungeon-stitch-a-{pid}.pcap"));
-    std::fs::write(&path_a, &pcap_a).unwrap();
-
-    let progress = AtomicU64::new(0);
-    let (session, _first) = Session::import(&path_a, &progress, &|_| {}).unwrap();
-
+    let (session, first) = import_bytes("stitch-a", &write_pcap(&polling_capture())).unwrap();
+    assert_reconciles(&first);
     let connections_before = session.connections().unwrap().len();
 
     // Override PLC A's role; the override must survive re-analysis on append.
@@ -295,7 +88,7 @@ fn add_capture_merges_hosts_and_fuses_flows() {
         .hosts()
         .unwrap()
         .into_iter()
-        .find(|h| h.ip_address == "192.168.10.1")
+        .find(|h| h.ip_address.as_deref() == Some("192.168.10.1"))
         .unwrap()
         .id;
     session
@@ -303,23 +96,20 @@ fn add_capture_merges_hosts_and_fuses_flows() {
         .unwrap();
 
     // Append a second capture that overlaps one flow and adds an HMI + PLC D.
-    let pcap_b = write_pcap(&follow_up_capture());
-    let path_b = dir.join(format!("purdungeon-stitch-b-{pid}.pcap"));
-    std::fs::write(&path_b, &pcap_b).unwrap();
-    let progress_b = AtomicU64::new(0);
-    session.add_capture(&path_b, &progress_b, &|_| {}).unwrap();
-
-    std::fs::remove_file(&path_a).ok();
-    std::fs::remove_file(&path_b).ok();
+    let second = append_bytes(&session, "stitch-b", &write_pcap(&follow_up_capture())).unwrap();
+    assert_reconciles(&second);
 
     let hosts = session.hosts().unwrap();
-    // Original four plus the new HMI and PLC D
     assert!(
-        hosts.iter().any(|h| h.ip_address == "192.168.10.50"),
+        hosts
+            .iter()
+            .any(|h| h.ip_address.as_deref() == Some("192.168.10.50")),
         "new HMI host missing after append"
     );
     assert!(
-        hosts.iter().any(|h| h.ip_address == "192.168.10.4"),
+        hosts
+            .iter()
+            .any(|h| h.ip_address.as_deref() == Some("192.168.10.4")),
         "new PLC D host missing after append"
     );
     assert_eq!(
@@ -373,10 +163,15 @@ fn snaplen_truncated_capture_counts_wire_bytes() {
     // Snaplen 60 keeps Ethernet+IP+TCP headers but cuts every Modbus payload.
     let (session, result) =
         import_bytes("snap", &write_pcap_ex(&packets, MAGIC_MICROS, 1, Some(60))).unwrap();
+    assert_reconciles(&result);
     assert_eq!(
         result.packet_count,
         packets.len(),
-        "truncated packets must still import"
+        "truncated payloads must still import as packets"
+    );
+    assert_eq!(
+        result.skipped.truncated, 0,
+        "a cut payload is not a cut header"
     );
     let stored: i64 = session
         .connections()
@@ -391,19 +186,31 @@ fn snaplen_truncated_capture_counts_wire_bytes() {
 }
 
 #[test]
-fn non_ethernet_linktype_is_a_clear_error() {
-    // Linktype 113 = LINUX_SLL (cooked capture)
-    let Err(err) = import_bytes(
-        "sll",
-        &write_pcap_ex(&polling_capture(), MAGIC_MICROS, 113, None),
-    ) else {
-        panic!("non-Ethernet capture must not import silently");
-    };
-    let msg = err.to_string();
-    assert!(
-        msg.contains("link type"),
-        "error should name the link type: {msg}"
-    );
+fn snaplen_cutting_headers_is_counted_as_truncated() {
+    let packets = polling_capture();
+    // 20 bytes: Ethernet plus six bytes of IP header — no addresses survive.
+    let (session, result) = import_bytes(
+        "snap20",
+        &write_pcap_ex(&packets, MAGIC_MICROS, 1, Some(20)),
+    )
+    .unwrap();
+    assert_reconciles(&result);
+    assert_eq!(result.packet_count, 0);
+    assert_eq!(result.skipped.truncated, packets.len());
+    assert_eq!(session.hosts().unwrap().len(), 0);
+
+    // 40 bytes: the IP header is whole, the TCP header is cut — hosts are
+    // known, the flow is not.
+    let (session, result) = import_bytes(
+        "snap40",
+        &write_pcap_ex(&packets, MAGIC_MICROS, 1, Some(40)),
+    )
+    .unwrap();
+    assert_reconciles(&result);
+    assert_eq!(result.packet_count, 0);
+    assert_eq!(result.skipped.truncated, packets.len());
+    assert_eq!(session.hosts().unwrap().len(), 4);
+    assert!(session.connections().unwrap().is_empty());
 }
 
 #[test]
@@ -416,7 +223,7 @@ fn pcapng_multi_section_resets_interfaces_and_skips_spbs() {
             PLC_A_IP,
             sp,
             502,
-            &mbap(1, 1, &[0x03, 0x00, 0x00, 0x00, 0x0A]),
+            &read_request(1),
         )
     };
     let t0: u64 = 1_700_000_000_000_000; // µs
@@ -434,10 +241,11 @@ fn pcapng_multi_section_resets_interfaces_and_skips_spbs() {
     file.extend(png_epb(t0 + 2_000_000, &pkt(49002)));
 
     let (_session, result) = import_bytes("ng-multi", &file).unwrap();
+    assert_reconciles(&result);
     assert_eq!(result.packet_count, 3);
     assert_eq!(
-        result.skipped.other, 1,
-        "the SPB should be counted as skipped"
+        result.skipped.no_timestamp, 1,
+        "the SPB should be counted as lacking a timestamp"
     );
     assert!(
         (result.time_range.0 - 1_700_000_000.0).abs() < 1e-3
@@ -448,31 +256,670 @@ fn pcapng_multi_section_resets_interfaces_and_skips_spbs() {
 }
 
 #[test]
-fn skipped_counters_report_ipv6_and_arp() {
+fn pcapng_unknown_interface_id_is_malformed() {
+    let pkt = tcp_packet(
+        SCADA_MAC,
+        PLC_MAC,
+        SCADA_IP,
+        PLC_A_IP,
+        49000,
+        502,
+        &read_request(1),
+    );
+    let t0: u64 = 1_700_000_000_000_000;
+    let mut file = Vec::new();
+    file.extend(png_shb());
+    file.extend(png_idb(1));
+    file.extend(png_epb_on(0, t0, &pkt));
+    file.extend(png_epb_on(7, t0 + 1, &pkt));
+    let (_session, result) = import_bytes("ng-badif", &file).unwrap();
+    assert_reconciles(&result);
+    assert_eq!(result.packet_count, 1);
+    assert_eq!(result.skipped.malformed, 1);
+}
+
+#[test]
+fn unsupported_link_type_is_per_packet_in_pcapng_and_an_error_when_alone() {
+    let pkt = tcp_packet(
+        SCADA_MAC,
+        PLC_MAC,
+        SCADA_IP,
+        PLC_A_IP,
+        49000,
+        502,
+        &read_request(1),
+    );
+    let t0: u64 = 1_700_000_000_000_000;
+    // Interface 0 is 802.11 (105), interface 1 is Ethernet.
+    let mut file = Vec::new();
+    file.extend(png_shb());
+    file.extend(png_idb(105));
+    file.extend(png_idb(1));
+    file.extend(png_epb_on(0, t0, &[0u8; 64]));
+    file.extend(png_epb_on(1, t0 + 1, &pkt));
+    file.extend(png_epb_on(0, t0 + 2, &[0u8; 64]));
+    let (_session, result) = import_bytes("ng-mixed-lt", &file).unwrap();
+    assert_reconciles(&result);
+    assert_eq!(result.packet_count, 1);
+    assert_eq!(result.skipped.unsupported_link_type, 2);
+
+    // Only unreadable interfaces: a clear error naming the link type.
+    let mut only = Vec::new();
+    only.extend(png_shb());
+    only.extend(png_idb(105));
+    only.extend(png_epb_on(0, t0, &[0u8; 64]));
+    let Err(err) = import_bytes("ng-only-lt", &only) else {
+        panic!("an all-802.11 pcapng must not import silently");
+    };
+    let err = err.to_string();
+    assert!(
+        err.contains("link type"),
+        "error should name the link type: {err}"
+    );
+
+    let legacy = write_pcap_linktype(&[(BASE_TS, vec![0u8; 64])], 105);
+    let Err(err) = import_bytes("legacy-lt", &legacy) else {
+        panic!("an 802.11 legacy pcap must not import silently");
+    };
+    let err = err.to_string();
+    assert!(
+        err.contains("link type"),
+        "error should name the link type: {err}"
+    );
+}
+
+#[test]
+fn linux_cooked_captures_import_with_sender_macs_only() {
+    let ip = |sp: u16| bare_ipv4_tcp(SCADA_IP, PLC_A_IP, sp, 502, &read_request(1));
+    let v1 = vec![
+        (BASE_TS, sll_frame(SCADA_MAC, 0x0800, &ip(49000))),
+        (BASE_TS + 1.0, sll_frame(SCADA_MAC, 0x0800, &ip(49000))),
+    ];
+    let (session, result) = import_bytes("sll", &write_pcap_linktype(&v1, 113)).unwrap();
+    assert_reconciles(&result);
+    assert_eq!(result.decoded.ipv4, 2);
+    let hosts = session.hosts().unwrap();
+    let scada = hosts
+        .iter()
+        .find(|h| h.ip_address.as_deref() == Some("192.168.10.100"))
+        .unwrap();
+    let plc = hosts
+        .iter()
+        .find(|h| h.ip_address.as_deref() == Some("192.168.10.1"))
+        .unwrap();
+    assert_eq!(scada.mac_address, "00:0c:29:11:22:33");
+    assert_eq!(
+        plc.mac_address, "",
+        "a cooked header carries no destination MAC"
+    );
+    assert_eq!(plc.vendor, None);
+
+    let v2 = vec![(BASE_TS, sll2_frame(PLC_MAC, 0x0800, &ip(49001)))];
+    let (session, result) = import_bytes("sll2", &write_pcap_linktype(&v2, 276)).unwrap();
+    assert_reconciles(&result);
+    assert_eq!(result.decoded.ipv4, 1);
+    let hosts = session.hosts().unwrap();
+    let scada = hosts
+        .iter()
+        .find(|h| h.ip_address.as_deref() == Some("192.168.10.100"))
+        .unwrap();
+    assert_eq!(scada.mac_address, "00:1b:1b:44:55:66");
+}
+
+#[test]
+fn raw_ip_and_loopback_captures_import() {
+    let v4 = bare_ipv4_tcp(SCADA_IP, PLC_A_IP, 49000, 502, &read_request(1));
+    let v6 = bare_ipv6_udp(V6_ULA_HMI, V6_ULA_PLC, 5000, 5001, &[0u8; 4]);
+    for (tag, linktype, frame) in [
+        ("raw", 101, v4.clone()),
+        ("ipv4", 228, v4.clone()),
+        ("ipv6", 229, v6),
+        ("null", 0, null_frame(&v4)),
+        ("loop", 108, null_frame(&v4)),
+    ] {
+        let (session, result) =
+            import_bytes(tag, &write_pcap_linktype(&[(BASE_TS, frame)], linktype)).unwrap();
+        assert_reconciles(&result);
+        assert_eq!(result.packet_count, 1, "{tag}: the packet should decode");
+        assert!(
+            session
+                .hosts()
+                .unwrap()
+                .iter()
+                .all(|h| h.mac_address.is_empty()),
+            "{tag}: raw-IP link types carry no MAC"
+        );
+    }
+}
+
+#[test]
+fn vlan_tagged_arp_populates_a_subnet_without_ip_traffic() {
+    let siemens = [0x00, 0x1b, 0x1b, 0x0a, 0x00, 0x01];
+    let gateway = ([10, 0, 10, 254], SWITCH_MAC);
+    let mut packets = Vec::new();
+    for i in 1..=6u8 {
+        let mac = if i == 1 {
+            siemens
+        } else {
+            [0x00, 0x0c, 0x29, 0x10, 0x00, i]
+        };
+        packets.push((
+            BASE_TS + f64::from(i),
+            arp_frame(
+                false,
+                ([10, 0, 10, i], mac),
+                ([10, 0, 10, 254], [0; 6]),
+                Some(10),
+            ),
+        ));
+    }
+    packets.push((
+        BASE_TS + 7.0,
+        arp_frame(true, gateway, ([10, 0, 10, 1], siemens), Some(10)),
+    ));
+    packets.push((
+        BASE_TS + 8.0,
+        arp_frame(
+            true,
+            gateway,
+            ([10, 0, 10, 2], [0x00, 0x0c, 0x29, 0x10, 0x00, 2]),
+            Some(10),
+        ),
+    ));
+
+    let (session, result) = import_bytes("arp-subnet", &write_pcap(&packets)).unwrap();
+    assert_reconciles(&result);
+    assert_eq!(result.decoded.arp, 8);
+    assert_eq!(
+        result.skipped.total(),
+        0,
+        "tagged ARP must not land in a skip bucket"
+    );
+    assert_eq!(result.host_count, 7);
+    assert_eq!(result.connection_count, 0);
+
+    let hosts = session.hosts().unwrap();
+    let dev1 = hosts
+        .iter()
+        .find(|h| h.ip_address.as_deref() == Some("10.0.10.1"))
+        .unwrap();
+    assert_eq!(dev1.mac_address, "00:1b:1b:0a:00:01");
+    assert_eq!(dev1.vendor.as_deref(), Some("Siemens"));
+    assert_eq!(dev1.link_protocols, "arp");
+    assert_eq!(dev1.role, "field-device");
+    assert!(
+        dev1.role_evidence
+            .as_deref()
+            .unwrap_or("")
+            .contains("seen only in ARP"),
+        "evidence should say the device was only seen in ARP: {:?}",
+        dev1.role_evidence
+    );
+    let dev3 = hosts
+        .iter()
+        .find(|h| h.ip_address.as_deref() == Some("10.0.10.3"))
+        .unwrap();
+    assert_eq!(dev3.role, "unknown");
+    assert!(
+        dev3.role_confidence.abs() < 1e-9,
+        "unknown must carry no confidence"
+    );
+    assert_eq!(
+        dev3.role_evidence.as_deref(),
+        Some("seen only in ARP; no IP traffic")
+    );
+    assert!(hosts
+        .iter()
+        .any(|h| h.ip_address.as_deref() == Some("10.0.10.254")));
+}
+
+#[test]
+fn arp_edge_cases_only_vouch_for_real_senders() {
+    let packets = vec![
+        // Gratuitous ARP: the sender announces its own address
+        (
+            BASE_TS,
+            arp_frame(
+                false,
+                ([10, 0, 0, 7], HMI_MAC),
+                ([10, 0, 0, 7], [0; 6]),
+                None,
+            ),
+        ),
+        // ARP probe from 0.0.0.0: no host yet
+        (
+            BASE_TS + 1.0,
+            arp_frame(
+                false,
+                ([0, 0, 0, 0], SCADA_MAC),
+                ([10, 0, 0, 8], [0; 6]),
+                None,
+            ),
+        ),
+        // A request's target is a question, not a device
+        (
+            BASE_TS + 2.0,
+            arp_frame(
+                false,
+                ([10, 0, 0, 9], PLC_MAC),
+                ([10, 0, 0, 200], [0; 6]),
+                None,
+            ),
+        ),
+    ];
+    let (session, result) = import_bytes("arp-edge", &write_pcap(&packets)).unwrap();
+    assert_reconciles(&result);
+    assert_eq!(result.decoded.arp, 3);
+    let ips: Vec<String> = session
+        .hosts()
+        .unwrap()
+        .into_iter()
+        .filter_map(|h| h.ip_address)
+        .collect();
+    assert_eq!(ips.len(), 2, "hosts: {ips:?}");
+    assert!(ips.contains(&"10.0.0.7".to_string()));
+    assert!(ips.contains(&"10.0.0.9".to_string()));
+}
+
+#[test]
+fn ipv6_flows_become_assets() {
+    let packets = vec![
+        (
+            BASE_TS,
+            udp6_packet(
+                HMI_MAC,
+                [0x33, 0x33, 0, 0, 0, 1],
+                V6_LINK_LOCAL_A,
+                V6_ALL_NODES,
+                5353,
+                5353,
+                &[0u8; 8],
+            ),
+        ),
+        (
+            BASE_TS + 1.0,
+            tcp6_packet(
+                HMI_MAC,
+                PLC_MAC,
+                V6_ULA_HMI,
+                V6_ULA_PLC,
+                51000,
+                502,
+                &read_request(1),
+            ),
+        ),
+        (
+            BASE_TS + 1.01,
+            tcp6_packet(
+                PLC_MAC,
+                HMI_MAC,
+                V6_ULA_PLC,
+                V6_ULA_HMI,
+                502,
+                51000,
+                &read_response(1),
+            ),
+        ),
+        (
+            BASE_TS + 2.0,
+            tcp6_packet(
+                HMI_MAC,
+                PLC_MAC,
+                V6_ULA_HMI,
+                V6_ULA_PLC,
+                51000,
+                502,
+                &read_request(2),
+            ),
+        ),
+    ];
+    let (session, result) = import_bytes("v6", &write_pcap(&packets)).unwrap();
+    assert_reconciles(&result);
+    assert_eq!(result.decoded.ipv6, 4);
+    assert_eq!(result.decoded.ipv4, 0);
+
+    let hosts = session.hosts().unwrap();
+    assert_eq!(hosts.len(), 4);
+    let by_ip = |ip: &str| {
+        hosts
+            .iter()
+            .find(|h| h.ip_address.as_deref() == Some(ip))
+            .unwrap_or_else(|| {
+                panic!(
+                    "{ip} missing; addresses must be RFC 5952 compressed: {:?}",
+                    hosts.iter().map(|h| &h.ip_address).collect::<Vec<_>>()
+                )
+            })
+    };
+    assert_eq!(by_ip("ff02::1").role, "broadcast");
+    let plc = by_ip("fd00::20");
+    assert_eq!(plc.role, "plc", "evidence: {:?}", plc.role_evidence);
+    assert!(!plc.is_external);
+    assert!(!by_ip("fe80::1").is_external);
+    assert!(session
+        .connections()
+        .unwrap()
+        .iter()
+        .any(|c| c.app_protocol.as_deref() == Some("modbus")));
+}
+
+#[test]
+fn icmpv6_and_other_ip_protocols_are_portless_flows() {
+    let packets = vec![
+        (
+            BASE_TS,
+            icmpv6_echo(HMI_MAC, PLC_MAC, V6_LINK_LOCAL_A, V6_LINK_LOCAL_B, false),
+        ),
+        (
+            BASE_TS + 0.01,
+            icmpv6_echo(PLC_MAC, HMI_MAC, V6_LINK_LOCAL_B, V6_LINK_LOCAL_A, true),
+        ),
+        // IGMPv3 membership report: an 8-byte header etherparse insists on
+        (
+            BASE_TS + 1.0,
+            ip_proto_packet(
+                SCADA_MAC,
+                [0x01, 0x00, 0x5e, 0, 0, 0x16],
+                SCADA_IP,
+                [224, 0, 0, 22],
+                IpNumber::IGMP,
+                &[0x22, 0, 0, 0, 0, 0, 0, 0],
+            ),
+        ),
+        (
+            BASE_TS + 2.0,
+            ip_proto_packet(
+                SWITCH_MAC,
+                [0x01, 0x00, 0x5e, 0, 0, 0x12],
+                [192, 168, 10, 254],
+                [224, 0, 0, 18],
+                IpNumber::VRRP,
+                &[0u8; 8],
+            ),
+        ),
+        (
+            BASE_TS + 3.0,
+            ip_proto_packet(
+                SCADA_MAC,
+                PLC_MAC,
+                SCADA_IP,
+                PLC_A_IP,
+                IpNumber::GRE,
+                &[0u8; 8],
+            ),
+        ),
+    ];
+    let (session, result) = import_bytes("portless", &write_pcap(&packets)).unwrap();
+    assert_reconciles(&result);
+    assert_eq!(result.packet_count, 5);
+    let connections = session.connections().unwrap();
+    let mut names: Vec<&str> = connections.iter().map(|c| c.protocol.as_str()).collect();
+    names.sort_unstable();
+    assert_eq!(names, ["GRE", "ICMPv6", "ICMPv6", "IGMP", "VRRP"]);
+    assert!(connections
+        .iter()
+        .all(|c| c.src_port == 0 && c.dst_port == 0));
+}
+
+#[test]
+fn ip_fragments_record_hosts_but_no_flow() {
+    let packets = vec![(
+        BASE_TS,
+        ipv4_fragment(HMI_MAC, PLC_MAC, [192, 168, 10, 5], [192, 168, 10, 6]),
+    )];
+    let (session, result) = import_bytes("frag", &write_pcap(&packets)).unwrap();
+    assert_reconciles(&result);
+    assert_eq!(result.skipped.fragment, 1);
+    assert_eq!(session.hosts().unwrap().len(), 2);
+    assert!(session.connections().unwrap().is_empty());
+}
+
+#[test]
+fn lldp_and_cdp_senders_become_mac_only_assets() {
+    let packets = vec![
+        (BASE_TS, lldp_frame(SWITCH_MAC)),
+        (BASE_TS + 30.0, cdp_frame(SWITCH_MAC)),
+    ];
+    let (session, result) = import_bytes("lldp-cdp", &write_pcap(&packets)).unwrap();
+    assert_reconciles(&result);
+    assert_eq!(result.decoded.lldp, 1);
+    assert_eq!(result.decoded.cdp, 1);
+    assert_eq!(result.packet_count, 2);
+    assert_eq!(
+        result.host_count, 1,
+        "the announcing switch is one MAC-only asset"
+    );
+    let hosts = session.hosts().unwrap();
+    let switch = &hosts[0];
+    assert_eq!(switch.ip_address, None);
+    assert_eq!(switch.mac_address, "00:80:63:01:02:03");
+    assert_eq!(
+        switch.hostname.as_deref(),
+        Some("SW1234"),
+        "named by its CDP device id"
+    );
+    assert_eq!(switch.link_protocols, "lldp,cdp");
+    assert!(session.connections().unwrap().is_empty());
+    assert!((result.time_range.1 - result.time_range.0 - 30.0).abs() < 1e-3);
+    assert_eq!(session.time_range().unwrap(), result.time_range);
+}
+
+#[test]
+fn unreadable_ethernet_payloads_are_counted_by_kind() {
+    let packets = vec![
+        (BASE_TS, stp_frame(SWITCH_MAC)),
+        (
+            BASE_TS + 1.0,
+            ethertype_frame(PLC_MAC, BROADCAST_MAC, 0x88A4, &[0u8; 40]),
+        ),
+        (
+            BASE_TS + 2.0,
+            ethertype_frame(PLC_MAC, BROADCAST_MAC, 0x8892, &[0u8; 40]),
+        ),
+        // 0x88CC that is not an LLDPDU
+        (
+            BASE_TS + 3.0,
+            ethertype_frame(SWITCH_MAC, BROADCAST_MAC, 0x88CC, &[0xff, 0xff, 0, 0]),
+        ),
+    ];
+    let (_session, result) = import_bytes("other-eth", &write_pcap(&packets)).unwrap();
+    assert_reconciles(&result);
+    assert_eq!(result.skipped.other_ethertype, 3);
+    assert_eq!(result.skipped.malformed, 1);
+    assert_eq!(result.packet_count, 0);
+}
+
+#[test]
+fn truncated_file_tail_imports_what_it_can() {
+    let packets = polling_capture();
+    let bytes = write_pcap(&packets);
+    let cut = &bytes[..bytes.len() - 10];
+    let (_session, result) = import_bytes("cut-tail", cut).unwrap();
+    assert_reconciles(&result);
+    assert_eq!(result.packet_count, packets.len() - 1);
+    assert_eq!(result.skipped.malformed, 1);
+    assert_eq!(result.frames_read, packets.len());
+}
+
+#[test]
+fn zero_timestamp_frames_are_counted_not_dated() {
     let mut packets = polling_capture();
-    let ts = 1_700_000_050.0;
+    packets.push((
+        0.0,
+        tcp_packet(
+            SCADA_MAC,
+            PLC_MAC,
+            SCADA_IP,
+            PLC_A_IP,
+            49000,
+            502,
+            &read_request(99),
+        ),
+    ));
+    let (session, result) = import_bytes("zero-ts", &write_pcap(&packets)).unwrap();
+    assert_reconciles(&result);
+    assert_eq!(result.skipped.no_timestamp, 1);
+    assert!(
+        result.time_range.0 >= BASE_TS,
+        "1970 must not appear: {:?}",
+        result.time_range
+    );
+    assert!(session.time_range().unwrap().0 >= BASE_TS);
+}
 
-    // One IPv6 UDP packet
-    let builder = etherparse::PacketBuilder::ethernet2(SCADA_MAC, PLC_MAC)
-        .ipv6([1u8; 16], [2u8; 16], 64)
-        .udp(1234, 5678);
-    let mut v6 = Vec::with_capacity(builder.size(4));
-    builder.write(&mut v6, &[0u8; 4]).unwrap();
-    packets.push((ts, v6));
+#[test]
+fn append_with_ipv6_hosts_present_and_arp_for_a_known_host() {
+    let first = vec![
+        (
+            BASE_TS,
+            tcp6_packet(
+                HMI_MAC,
+                PLC_MAC,
+                V6_ULA_HMI,
+                V6_ULA_PLC,
+                51000,
+                502,
+                &read_request(1),
+            ),
+        ),
+        (
+            BASE_TS + 0.01,
+            tcp6_packet(
+                PLC_MAC,
+                HMI_MAC,
+                V6_ULA_PLC,
+                V6_ULA_HMI,
+                502,
+                51000,
+                &read_response(1),
+            ),
+        ),
+        (
+            BASE_TS + 1.0,
+            tcp_packet(
+                SCADA_MAC,
+                PLC_MAC,
+                SCADA_IP,
+                PLC_A_IP,
+                49000,
+                502,
+                &read_request(2),
+            ),
+        ),
+    ];
+    let (session, r1) = import_bytes("v6-append-a", &write_pcap(&first)).unwrap();
+    assert_reconciles(&r1);
+    let connections_before = session.connections().unwrap().len();
 
-    // One ARP request (ethertype 0x0806, body content irrelevant)
-    let mut arp = Vec::new();
-    arp.extend_from_slice(&[0xff; 6]); // dst: broadcast
-    arp.extend_from_slice(&SCADA_MAC);
-    arp.extend_from_slice(&[0x08, 0x06]);
-    arp.extend_from_slice(&[0u8; 28]);
-    packets.push((ts + 0.5, arp));
+    let second = vec![
+        // Same IPv6 flow again: must fuse, not duplicate
+        (
+            BASE_TS + 10.0,
+            tcp6_packet(
+                HMI_MAC,
+                PLC_MAC,
+                V6_ULA_HMI,
+                V6_ULA_PLC,
+                51000,
+                502,
+                &read_request(3),
+            ),
+        ),
+        // The SCADA now also shows up in ARP
+        (
+            BASE_TS + 11.0,
+            arp_frame(false, (SCADA_IP, SCADA_MAC), (PLC_A_IP, [0; 6]), None),
+        ),
+    ];
+    let r2 = append_bytes(&session, "v6-append-b", &write_pcap(&second)).unwrap();
+    assert_reconciles(&r2);
+    assert_eq!(r2.decoded.ipv6, 1);
+    assert_eq!(r2.decoded.arp, 1);
 
-    let ipv4_count = packets.len() - 2;
-    let (_session, result) = import_bytes("skips", &write_pcap(&packets)).unwrap();
-    assert_eq!(result.packet_count, ipv4_count);
-    assert_eq!(result.skipped.ipv6, 1);
-    assert_eq!(result.skipped.arp, 1);
+    let hosts = session.hosts().unwrap();
+    assert_eq!(
+        hosts.len(),
+        4,
+        "no host may be duplicated on append: {hosts:?}"
+    );
+    assert_eq!(session.connections().unwrap().len(), connections_before);
+    let scada = hosts
+        .iter()
+        .find(|h| h.ip_address.as_deref() == Some("192.168.10.100"))
+        .unwrap();
+    assert_eq!(
+        scada.link_protocols, "arp",
+        "link-layer sightings must union on append"
+    );
+}
+
+#[test]
+fn vlan_ids_are_recorded_on_conversations() {
+    let packets = vec![
+        (
+            BASE_TS,
+            vlan_tcp_packet(
+                20,
+                SCADA_MAC,
+                PLC_MAC,
+                SCADA_IP,
+                PLC_A_IP,
+                49000,
+                502,
+                &read_request(1),
+            ),
+        ),
+        (
+            BASE_TS + 1.0,
+            tcp_packet(
+                SCADA_MAC,
+                PLC_MAC,
+                SCADA_IP,
+                PLC_B_IP,
+                49001,
+                502,
+                &read_request(2),
+            ),
+        ),
+        (
+            BASE_TS + 2.0,
+            qinq_tcp_packet(
+                100,
+                200,
+                SCADA_MAC,
+                PLC_MAC,
+                SCADA_IP,
+                PLC_C_IP,
+                49002,
+                502,
+                &read_request(3),
+            ),
+        ),
+    ];
+    let (session, result) = import_bytes("vlan", &write_pcap(&packets)).unwrap();
+    assert_reconciles(&result);
+    assert_eq!(result.packet_count, 3);
+    let connections = session.connections().unwrap();
+    let vlan_of = |port: u16| {
+        connections
+            .iter()
+            .find(|c| c.src_port == port)
+            .unwrap()
+            .vlan_id
+    };
+    assert_eq!(vlan_of(49000), Some(20));
+    assert_eq!(vlan_of(49001), None);
+    assert_eq!(vlan_of(49002), Some(100), "QinQ records the outer tag");
+
+    let scada_id = session
+        .hosts()
+        .unwrap()
+        .iter()
+        .find(|h| h.ip_address.as_deref() == Some("192.168.10.100"))
+        .unwrap()
+        .id;
+    let detail = session.host_detail(scada_id).unwrap();
+    assert_eq!(detail.vlans, vec![20, 100]);
 }
 
 #[test]
@@ -491,5 +938,249 @@ fn identical_imports_produce_identical_findings() {
         signature(&session_a),
         signature(&session_b),
         "the same capture must always produce the same findings, in the same order"
+    );
+}
+
+// ── Identity evidence (PR 2) ────────────────────────────────────────────────
+
+fn evidence_of<'a>(
+    evidence: &'a [purdungeon_core::types::Evidence],
+    kind: &str,
+) -> Vec<&'a purdungeon_core::types::Evidence> {
+    evidence.iter().filter(|e| e.kind == kind).collect()
+}
+
+// One scenario, many devices: the assertions read best in one place.
+#[allow(clippy::too_many_lines)]
+#[test]
+fn identity_protocols_fill_the_evidence_table() {
+    let (session, result) = import_bytes("identity", &write_pcap(&identity_capture())).unwrap();
+    assert_reconciles(&result);
+    let hosts = session.hosts().unwrap();
+    let by_ip = |ip: &str| {
+        hosts
+            .iter()
+            .find(|h| h.ip_address.as_deref() == Some(ip))
+            .unwrap_or_else(|| panic!("{ip} missing from {hosts:?}"))
+    };
+
+    // The workstation: named by DHCP, NetBIOS and LLMNR; OS guessed from DHCP.
+    let ws = by_ip("192.168.10.77");
+    assert_eq!(ws.hostname.as_deref(), Some("ENG-WS01"));
+    assert_eq!(ws.mac_address, "00:50:56:01:02:03");
+    assert_eq!(ws.role, "workstation", "evidence: {:?}", ws.role_evidence);
+    assert_eq!(ws.role_evidence.as_deref(), Some("Windows host (DHCP)"));
+    let detail = session.host_detail(ws.id).unwrap();
+    let names = evidence_of(&detail.evidence, "hostname");
+    let sources: Vec<&str> = names.iter().map(|e| e.source_protocol.as_str()).collect();
+    assert!(
+        sources.contains(&"dhcp") && sources.contains(&"nbns") && sources.contains(&"llmnr"),
+        "{sources:?}"
+    );
+    assert!(names.iter().all(|e| e.value == "ENG-WS01"));
+    let os = evidence_of(&detail.evidence, "os");
+    assert_eq!(os.len(), 1);
+    assert_eq!(os[0].value, "Windows");
+    assert!((os[0].confidence - 0.7).abs() < 1e-9);
+    assert_eq!(
+        evidence_of(&detail.evidence, "vendor-class")[0].value,
+        "MSFT 5.0"
+    );
+    assert_eq!(
+        evidence_of(&detail.evidence, "domain")
+            .iter()
+            .map(|e| e.value.as_str())
+            .collect::<Vec<_>>(),
+        ["PLANT", "plant.local"]
+    );
+    let macs = evidence_of(&detail.evidence, "mac");
+    let mac_sources: Vec<&str> = macs.iter().map(|e| e.source_protocol.as_str()).collect();
+    assert!(
+        mac_sources.contains(&"arp")
+            && mac_sources.contains(&"dhcp")
+            && mac_sources.contains(&"ethernet"),
+        "{mac_sources:?}"
+    );
+    assert!(
+        detail.evidence.windows(2).all(|w| w[0].kind <= w[1].kind),
+        "evidence must be sorted by kind"
+    );
+
+    // The printer over mDNS
+    let printer = by_ip("192.168.10.90");
+    assert_eq!(printer.hostname.as_deref(), Some("printer"));
+    let detail = session.host_detail(printer.id).unwrap();
+    assert_eq!(
+        evidence_of(&detail.evidence, "service")[0].value,
+        "_ipp._tcp"
+    );
+    assert_eq!(
+        evidence_of(&detail.evidence, "model")[0].value,
+        "Deskjet 2700"
+    );
+
+    // The core switch: SNMP and LLDP agree, and the description settles the role.
+    let core = by_ip("192.168.10.2");
+    assert_eq!(core.hostname.as_deref(), Some("SW-CORE"));
+    assert_eq!(
+        core.role, "network-gear",
+        "evidence: {:?}",
+        core.role_evidence
+    );
+    assert!(
+        core.role_evidence
+            .as_deref()
+            .unwrap()
+            .starts_with("describes itself as \"Cisco IOS"),
+        "{:?}",
+        core.role_evidence
+    );
+    assert_eq!(core.link_protocols, "lldp");
+    let detail = session.host_detail(core.id).unwrap();
+    assert_eq!(
+        evidence_of(&detail.evidence, "vendor")[0].value,
+        "Cisco Systems"
+    );
+    assert_eq!(
+        evidence_of(&detail.evidence, "port")[0].value,
+        "Gi1/0/5 (uplink)"
+    );
+    assert_eq!(
+        evidence_of(&detail.evidence, "capabilities")[0].value,
+        "bridge"
+    );
+    assert_eq!(
+        evidence_of(&detail.evidence, "management-address")[0].value,
+        "192.168.10.2"
+    );
+    assert_eq!(
+        evidence_of(&detail.evidence, "sysobjectid")[0].value,
+        "1.3.6.1.4.1.9.1.716"
+    );
+
+    // The controller keeps its role from traffic; its LLDP is evidence, not a verdict.
+    let plc = by_ip("192.168.10.1");
+    assert_eq!(plc.role, "plc");
+    assert_eq!(plc.hostname.as_deref(), Some("plc-line1"));
+    let detail = session.host_detail(plc.id).unwrap();
+    assert_eq!(
+        evidence_of(&detail.evidence, "capabilities")[0].value,
+        "bridge, station-only"
+    );
+}
+
+#[test]
+fn a_switch_heard_only_over_cdp_becomes_a_mac_only_asset() {
+    let (session, result) = import_bytes("identity-cdp", &write_pcap(&identity_capture())).unwrap();
+    assert_reconciles(&result);
+    let hosts = session.hosts().unwrap();
+    let silent = hosts
+        .iter()
+        .find(|h| h.mac_address == "00:1e:14:aa:bb:cc")
+        .expect("the CDP-only switch must exist as an asset");
+    assert_eq!(silent.ip_address, None);
+    assert_eq!(silent.hostname.as_deref(), Some("SW-ACCESS-2"));
+    assert_eq!(
+        silent.role, "network-gear",
+        "evidence: {:?}",
+        silent.role_evidence
+    );
+    assert_eq!(silent.link_protocols, "cdp");
+    let detail = session.host_detail(silent.id).unwrap();
+    assert_eq!(
+        evidence_of(&detail.evidence, "model")[0].value,
+        "cisco WS-C2960-24TT-L"
+    );
+    assert_eq!(
+        evidence_of(&detail.evidence, "capabilities")[0].value,
+        "switch, igmp"
+    );
+    assert_eq!(
+        evidence_of(&detail.evidence, "port")[0].value,
+        "GigabitEthernet1/0/12"
+    );
+    assert!(detail.connections.is_empty());
+    // A MAC-only asset is neither external nor broadcast, and stays on the map.
+    assert!(!silent.is_external);
+    assert_eq!(result.host_count, hosts.len());
+}
+
+#[test]
+fn arp_corrects_a_mac_learned_from_a_routed_frame() {
+    let (session, _) = import_bytes("identity-mac", &write_pcap(&identity_capture())).unwrap();
+    let hosts = session.hosts().unwrap();
+    let moved = hosts
+        .iter()
+        .find(|h| h.ip_address.as_deref() == Some("192.168.10.60"))
+        .unwrap();
+    assert_eq!(
+        moved.mac_address, "00:0c:29:60:60:60",
+        "ARP outranks the frame MAC"
+    );
+    let detail = session.host_detail(moved.id).unwrap();
+    let macs = evidence_of(&detail.evidence, "mac");
+    assert!(macs
+        .iter()
+        .any(|e| e.source_protocol == "ethernet" && e.value == "00:1e:14:00:00:01"));
+    assert!(macs
+        .iter()
+        .any(|e| e.source_protocol == "arp" && e.value == "00:0c:29:60:60:60"));
+}
+
+#[test]
+fn dhcp_discover_without_an_ack_still_names_the_client() {
+    let packets = vec![(BASE_TS, dhcp_discover_frame(WS_MAC, "LAPTOP-7"))];
+    let (session, result) = import_bytes("dhcp-only", &write_pcap(&packets)).unwrap();
+    assert_reconciles(&result);
+    let hosts = session.hosts().unwrap();
+    // 0.0.0.0 and 255.255.255.255 are pseudo-hosts hidden as broadcast; the
+    // client itself is a MAC-only asset carrying the name.
+    let client = hosts
+        .iter()
+        .find(|h| h.mac_address == "00:50:56:01:02:03" && h.ip_address.is_none())
+        .expect("MAC-only client");
+    assert_eq!(client.hostname.as_deref(), Some("LAPTOP-7"));
+    assert_eq!(
+        hosts
+            .iter()
+            .find(|h| h.ip_address.as_deref() == Some("0.0.0.0"))
+            .unwrap()
+            .role,
+        "broadcast"
+    );
+}
+
+#[test]
+fn identity_evidence_survives_an_append() {
+    let (session, _) = import_bytes("identity-append-a", &write_pcap(&identity_capture())).unwrap();
+    let again = append_bytes(
+        &session,
+        "identity-append-b",
+        &write_pcap(&identity_capture()),
+    )
+    .unwrap();
+    assert_reconciles(&again);
+    let hosts = session.hosts().unwrap();
+    let ws = hosts
+        .iter()
+        .find(|h| h.ip_address.as_deref() == Some("192.168.10.77"))
+        .unwrap();
+    let detail = session.host_detail(ws.id).unwrap();
+    let dhcp_names = evidence_of(&detail.evidence, "hostname");
+    let nbns = dhcp_names
+        .iter()
+        .find(|e| e.source_protocol == "nbns")
+        .unwrap();
+    assert_eq!(
+        nbns.count, 2,
+        "the same fact seen in both files merges into one row"
+    );
+    assert_eq!(
+        hosts
+            .iter()
+            .filter(|h| h.mac_address == "00:1e:14:aa:bb:cc")
+            .count(),
+        1,
+        "MAC-only assets must not duplicate on append"
     );
 }

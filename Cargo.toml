@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
-members = ["crates/core", "src-tauri"]
+members = ["crates/core", "src-tauri", "xtask"]
+default-members = ["crates/core", "src-tauri"]
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }

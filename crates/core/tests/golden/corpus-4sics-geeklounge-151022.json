@@ -1,0 +1,815 @@
+{
+  "fixture": "corpus-4sics-geeklounge-151022",
+  "frames_read": 2274747,
+  "packet_count": 2269382,
+  "decoded": {
+    "ipv4": 2253159,
+    "ipv6": 26,
+    "arp": 16197,
+    "lldp": 0,
+    "cdp": 0
+  },
+  "skipped": {
+    "unsupported_link_type": 0,
+    "other_ethertype": 5360,
+    "fragment": 0,
+    "truncated": 0,
+    "malformed": 5,
+    "no_timestamp": 0
+  },
+  "host_count": 105,
+  "connection_count": 1589615,
+  "time_range": [
+    1445465434.99527,
+    1445519857.089263
+  ],
+  "hosts": [
+    {
+      "ip": "8.8.8.8",
+      "mac": "00:0a:dc:64:85:c2",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "10.0.1.82",
+      "mac": "28:cf:e9:18:b5:ed",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "10.10.10.1",
+      "mac": "04:18:d6:83:db:16",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "10.10.10.10",
+      "mac": "28:63:36:89:59:82",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "10.10.10.20",
+      "mac": "00:1c:06:27:64:11",
+      "vendor": "Siemens",
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "10.10.10.30",
+      "mac": "54:ee:75:3f:4a:db",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "10.100.152.1",
+      "mac": "a2:f4:01:00:01:d6",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "10.100.152.10",
+      "mac": "1c:e8:5d:69:c5:c2",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "10.100.152.15",
+      "mac": "78:31:c1:ca:8d:82",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "10.100.152.92",
+      "mac": "28:cf:e9:18:b5:ed",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "10.100.152.93",
+      "mac": "f4:09:d8:69:f2:5d",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "10.100.152.119",
+      "mac": "6c:40:08:95:a0:66",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "10.100.152.128",
+      "mac": "00:0c:be:04:f3:0a",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "10.100.158.168",
+      "mac": "20:62:74:23:0a:60",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "10.100.158.185",
+      "mac": "20:c9:d0:78:96:ef",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "10.100.159.27",
+      "mac": "9c:f3:87:d9:d7:e0",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "10.100.159.125",
+      "mac": "c0:ee:fb:42:90:27",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "10.100.159.151",
+      "mac": "9c:f3:87:c1:4c:d6",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "10.100.159.207",
+      "mac": "f0:25:b7:76:4b:12",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "10.100.159.218",
+      "mac": "30:a8:db:bc:ed:46",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "10.100.159.227",
+      "mac": "38:b1:db:e1:e9:cf",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "10.100.159.228",
+      "mac": "90:b9:31:05:b8:80",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "10.100.159.247",
+      "mac": "a4:5e:60:d9:2e:1b",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "10.100.159.253",
+      "mac": "ec:1f:72:41:95:72",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "10.218.104.244",
+      "mac": "00:0a:dc:64:85:c2",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "17.110.224.213",
+      "mac": "a2:f4:01:00:01:d6",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "17.110.230.30",
+      "mac": "a2:f4:01:00:01:d6",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "17.130.137.73",
+      "mac": "a2:f4:01:00:01:d6",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "17.130.137.75",
+      "mac": "a2:f4:01:00:01:d6",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "17.253.34.253",
+      "mac": "00:0a:dc:64:85:c2",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "17.253.54.251",
+      "mac": "00:07:7c:1a:61:83",
+      "vendor": "Westermo",
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "21.2.2.2",
+      "mac": "00:07:7c:1a:61:83",
+      "vendor": "Westermo",
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "52.4.151.114",
+      "mac": "a2:f4:01:00:01:d6",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "52.5.95.205",
+      "mac": "a2:f4:01:00:01:d6",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "54.210.217.83",
+      "mac": "a2:f4:01:00:01:d6",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "54.241.179.26",
+      "mac": "a2:f4:01:00:01:d6",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "74.125.205.188",
+      "mac": "a2:f4:01:00:01:d6",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "77.245.33.76",
+      "mac": "a2:f4:01:00:01:d6",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "83.140.27.11",
+      "mac": "a2:f4:01:00:01:d6",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "93.158.94.210",
+      "mac": "00:07:7c:1a:61:83",
+      "vendor": "Westermo",
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "93.158.110.200",
+      "mac": "a2:f4:01:00:01:d6",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "93.158.110.218",
+      "mac": "a2:f4:01:00:01:d6",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "108.160.163.110",
+      "mac": "a2:f4:01:00:01:d6",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "141.82.217.52",
+      "mac": "a2:f4:01:00:01:d6",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "172.16.184.40",
+      "mac": "04:18:d6:83:db:16",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "173.252.90.4",
+      "mac": "a2:f4:01:00:01:d6",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "192.168.0.2",
+      "mac": "34:12:98:dc:df:fb",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "192.168.0.3",
+      "mac": "00:07:7c:1a:61:83",
+      "vendor": "Westermo",
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "192.168.1.2",
+      "mac": "18:34:51:d5:4f:9a",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "192.168.1.10",
+      "mac": "04:18:d6:83:db:16",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "192.168.1.68",
+      "mac": "00:07:7c:1a:61:83",
+      "vendor": "Westermo",
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "192.168.1.71",
+      "mac": "00:0a:dc:64:85:c2",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "192.168.1.79",
+      "mac": "00:0a:dc:64:85:c2",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "192.168.2.21",
+      "mac": "00:07:7c:1a:61:83",
+      "vendor": "Westermo",
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "192.168.2.22",
+      "mac": "00:07:7c:1a:61:83",
+      "vendor": "Westermo",
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "192.168.2.44",
+      "mac": "00:07:7c:1a:61:83",
+      "vendor": "Westermo",
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "192.168.2.53",
+      "mac": "00:07:7c:1a:61:83",
+      "vendor": "Westermo",
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "192.168.2.64",
+      "mac": "00:07:7c:1a:61:83",
+      "vendor": "Westermo",
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "192.168.2.110",
+      "mac": "00:07:7c:1a:61:83",
+      "vendor": "Westermo",
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "192.168.2.133",
+      "mac": "00:07:7c:1a:61:83",
+      "vendor": "Westermo",
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "192.168.2.137",
+      "mac": "00:07:7c:1a:61:83",
+      "vendor": "Westermo",
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "192.168.2.166",
+      "mac": "00:07:7c:1a:61:83",
+      "vendor": "Westermo",
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "192.168.2.199",
+      "mac": "00:07:7c:1a:61:83",
+      "vendor": "Westermo",
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "192.168.57.2",
+      "mac": "00:71:00:ff:11:a2",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "192.168.57.3",
+      "mac": "00:1e:ec:26:d2:ac",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "192.168.88.1",
+      "mac": "00:07:7c:1a:61:83",
+      "vendor": "Westermo",
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "192.168.88.2",
+      "mac": "00:0a:dc:64:85:c3",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "192.168.88.15",
+      "mac": "00:e0:62:00:17:0a",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "192.168.88.20",
+      "mac": "00:a0:45:6f:4b:83",
+      "vendor": "Phoenix Contact",
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "192.168.88.25",
+      "mac": "00:d0:c9:a5:c9:2d",
+      "vendor": "Advantech",
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "192.168.88.30",
+      "mac": "00:1c:06:01:d4:23",
+      "vendor": "Siemens",
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "192.168.88.49",
+      "mac": "00:40:8c:7f:0b:bc",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "192.168.88.50",
+      "mac": "00:05:e4:01:24:d3",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "192.168.88.51",
+      "mac": "00:d0:c9:bd:2e:57",
+      "vendor": "Advantech",
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "192.168.88.52",
+      "mac": "20:c9:d0:44:d1:e7",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "192.168.88.53",
+      "mac": "a0:99:9b:1c:d8:65",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "192.168.88.54",
+      "mac": "a0:99:9b:1c:d8:65",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "192.168.88.55",
+      "mac": "a0:99:9b:1c:d8:65",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "192.168.88.60",
+      "mac": "00:90:e8:26:40:23",
+      "vendor": "Moxa",
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "192.168.88.61",
+      "mac": "00:90:e8:27:8c:37",
+      "vendor": "Moxa",
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "192.168.88.75",
+      "mac": "00:80:63:b5:b6:bb",
+      "vendor": "Hirschmann",
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "192.168.88.80",
+      "mac": "00:90:e8:26:7b:17",
+      "vendor": "Moxa",
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "192.168.88.85",
+      "mac": "ac:cf:23:02:23:6e",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "192.168.88.95",
+      "mac": "00:0a:dc:5b:27:a0",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "192.168.88.100",
+      "mac": "00:e0:62:40:57:66",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "192.168.88.105",
+      "mac": "00:11:22:7b:c5:50",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "192.168.88.115",
+      "mac": "00:40:9d:28:ee:0d",
+      "vendor": "Digi International",
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "192.168.88.130",
+      "mac": "00:90:e8:10:af:c8",
+      "vendor": "Moxa",
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "192.168.88.254",
+      "mac": "00:0c:be:04:f3:0b",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "192.168.89.1",
+      "mac": "00:0a:dc:64:85:c2",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "192.168.89.2",
+      "mac": "70:71:bc:3a:0d:e8",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "192.168.143.1",
+      "mac": "00:50:56:c0:00:01",
+      "vendor": "VMware",
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "192.168.143.155",
+      "mac": "a0:99:9b:1c:d8:65",
+      "vendor": null,
+      "hostname": "kali",
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "192.168.143.254",
+      "mac": "00:07:7c:1a:61:83",
+      "vendor": "Westermo",
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "192.195.142.13",
+      "mac": "00:07:7c:1a:61:83",
+      "vendor": "Westermo",
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "192.195.142.14",
+      "mac": "00:07:7c:1a:61:83",
+      "vendor": "Westermo",
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "193.182.190.178",
+      "mac": "a2:f4:01:00:01:d6",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "193.209.237.4",
+      "mac": "a2:f4:01:00:01:d6",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "199.16.156.48",
+      "mac": "a2:f4:01:00:01:d6",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "199.16.156.70",
+      "mac": "a2:f4:01:00:01:d6",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "199.16.156.72",
+      "mac": "a2:f4:01:00:01:d6",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "199.16.156.198",
+      "mac": "a2:f4:01:00:01:d6",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "199.16.156.231",
+      "mac": "a2:f4:01:00:01:d6",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "fe80::5e51:4fff:fe7b:e6c5",
+      "mac": "b8:ae:ed:75:70:41",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "fe80::baae:edff:fe75:7041",
+      "mac": "b8:ae:ed:75:70:41",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    }
+  ],
+  "transports": {
+    "ICMP": 154,
+    "ICMPv6": 1,
+    "TCP": 1583001,
+    "UDP": 6459
+  },
+  "app_protocols": {
+    "bacnet": 47,
+    "dhcp": 68,
+    "dnp3": 796,
+    "dns": 6618,
+    "enip": 208,
+    "enip-io": 357,
+    "ff-annunc": 345,
+    "fins": 40,
+    "fox": 18,
+    "ftp": 1037,
+    "http": 5351,
+    "https": 6499,
+    "iec104": 15,
+    "kerberos": 312,
+    "ldap": 340,
+    "modbus": 1177,
+    "msrpc": 454,
+    "mssql": 330,
+    "mysql": 442,
+    "netbios": 478,
+    "ntp": 10,
+    "opcua": 32,
+    "oracle": 364,
+    "postgres": 321,
+    "rdp": 409,
+    "s7comm": 11940,
+    "smb": 546,
+    "smtp": 413,
+    "snmp": 384,
+    "ssh": 1915,
+    "telnet": 1687,
+    "tftp": 13,
+    "unnamed": 1546180,
+    "vnc": 469
+  },
+  "vlans": [],
+  "evidence": {
+    "description": 1,
+    "dhcp-fingerprint": 1,
+    "domain": 1,
+    "hostname": 1,
+    "mac": 150,
+    "os": 1,
+    "sysobjectid": 1
+  }
+}

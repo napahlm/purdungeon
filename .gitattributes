@@ -1,2 +1,9 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Packet captures are binary; never normalise line endings in them.
+*.pcap   binary
+*.pcapng binary
+*.cap    binary
+# Golden snapshots are compared byte-for-byte after CRLF normalisation; keep LF.
+crates/core/tests/golden/*.json text eol=lf

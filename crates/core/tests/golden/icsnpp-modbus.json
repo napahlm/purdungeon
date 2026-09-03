@@ -1,0 +1,59 @@
+{
+  "fixture": "icsnpp-modbus",
+  "frames_read": 100,
+  "packet_count": 100,
+  "decoded": {
+    "ipv4": 100,
+    "ipv6": 0,
+    "arp": 0,
+    "lldp": 0,
+    "cdp": 0
+  },
+  "skipped": {
+    "unsupported_link_type": 0,
+    "other_ethertype": 0,
+    "fragment": 0,
+    "truncated": 0,
+    "malformed": 0,
+    "no_timestamp": 0
+  },
+  "host_count": 3,
+  "connection_count": 4,
+  "time_range": [
+    1595660608.237857,
+    1595890833.407055
+  ],
+  "hosts": [
+    {
+      "ip": "3.15.227.20",
+      "mac": "50:6a:03:ae:49:7d",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "127.0.0.1",
+      "mac": "00:00:00:00:00:00",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "192.168.1.6",
+      "mac": "04:0e:3c:1f:4b:c1",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    }
+  ],
+  "transports": {
+    "TCP": 4
+  },
+  "app_protocols": {
+    "modbus": 4
+  },
+  "vlans": [],
+  "evidence": {
+    "mac": 3
+  }
+}

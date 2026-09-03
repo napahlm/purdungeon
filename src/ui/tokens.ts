@@ -48,26 +48,44 @@ export function initTokens() {
   const styles = getComputedStyle(document.documentElement)
   const read = (name: string) => styles.getPropertyValue(name).trim()
 
-  for (const key of Object.keys(LEVEL_COLORS) as (keyof typeof LEVEL_COLORS)[]) {
-    LEVEL_COLORS[key] = read(`--color-level-${key}`)
-  }
-  for (const key of Object.keys(PROTO_COLORS) as (keyof typeof PROTO_COLORS)[]) {
-    PROTO_COLORS[key] = read(`--color-proto-${key}`)
+  // A colour token that is missing must still draw something: Konva paints
+  // an empty string as fully transparent, and an invisible node is worse
+  // than a grey one. Fall back to the muted text colour and say so.
+  const missing: string[] = []
+  const fallback = read('--color-text-muted') || 'gray' // only if style.css never loaded
+  const readColor = (name: string) => {
+    const value = read(name)
+    if (value) return value
+    missing.push(name)
+    return fallback
   }
 
-  UI.accent = read('--color-accent')
-  UI.alert = read('--color-alert')
-  UI.warn = read('--color-warn')
-  UI.textPrimary = read('--color-text-primary')
-  UI.textSecondary = read('--color-text-secondary')
-  UI.textMuted = read('--color-text-muted')
-  UI.selection = read('--color-text-primary')
-  UI.bgPrimary = read('--color-bg-primary')
-  UI.bgSecondary = read('--color-bg-secondary')
-  UI.border = read('--color-border')
-  UI.bandFill = read('--color-band-fill')
-  UI.bandLine = read('--color-band-line')
-  UI.badgeBg = read('--color-badge-bg')
+  for (const key of Object.keys(LEVEL_COLORS) as (keyof typeof LEVEL_COLORS)[]) {
+    LEVEL_COLORS[key] = readColor(`--color-level-${key}`)
+  }
+  for (const key of Object.keys(PROTO_COLORS) as (keyof typeof PROTO_COLORS)[]) {
+    PROTO_COLORS[key] = readColor(`--color-proto-${key}`)
+  }
+
+  UI.accent = readColor('--color-accent')
+  UI.alert = readColor('--color-alert')
+  UI.warn = readColor('--color-warn')
+  UI.textPrimary = readColor('--color-text-primary')
+  UI.textSecondary = readColor('--color-text-secondary')
+  UI.textMuted = readColor('--color-text-muted')
+  UI.selection = readColor('--color-text-primary')
+  UI.bgPrimary = readColor('--color-bg-primary')
+  UI.bgSecondary = readColor('--color-bg-secondary')
+  UI.border = readColor('--color-border')
+  UI.bandFill = readColor('--color-band-fill')
+  UI.bandLine = readColor('--color-band-line')
+  UI.badgeBg = readColor('--color-badge-bg')
+
+  if (missing.length > 0) {
+    console.warn(
+      `design tokens missing from style.css, drawn in the fallback grey: ${missing.join(', ')}`,
+    )
+  }
 
   FONTS.sans = read('--font-sans') || FONTS.sans
   FONTS.mono = read('--font-mono') || FONTS.mono

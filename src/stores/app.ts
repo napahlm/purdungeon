@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
-import type { SkippedPackets } from '@/types/network'
+import type { LinkLayerCounts, SkippedPackets } from '@/types/network'
+import { addDecoded, addSkipped, emptyDecoded, emptySkipped } from '@/utils/skipped'
 
 /** Backend stages arrive over the `import-stage` event; `building-view`
  *  is the frontend's own final stage while the graph is assembled. */
@@ -37,6 +38,13 @@ export interface CaptureSource {
   packets: number
 }
 
+/** The per-file frame accounting an import returns. */
+export interface ImportCounts {
+  frames_read: number
+  decoded: LinkLayerCounts
+  skipped: SkippedPackets
+}
+
 export const useAppStore = defineStore('app', () => {
   const loading = ref(false)
   const loadedFile = ref<string | null>(null)
@@ -50,9 +58,12 @@ export const useAppStore = defineStore('app', () => {
   // The findings panel's collapsed state lives here (not in the panel) so the
   // canvas can frame content into the actually-visible area.
   const findingsCollapsed = ref(false)
-  // Packets the parser read but couldn't import (IPv6, ARP, …), summed across
-  // every capture stitched into the session. Surfaces why a view looks thin.
-  const skipped = ref<SkippedPackets>({ ipv6: 0, arp: 0, other: 0 })
+  // Frame accounting summed across every capture stitched into the session:
+  // what could not be decoded (by reason) and what was decoded at the link
+  // layer only. Surfaces why a view looks thin.
+  const skipped = ref<SkippedPackets>(emptySkipped())
+  const decoded = ref<LinkLayerCounts>(emptyDecoded())
+  const framesRead = ref(0)
   // Position of the file being imported within a multi-file batch (1-based),
   // and the batch size — drives the "File 2 of 3" line.
   const currentFile = ref(0)
@@ -137,22 +148,22 @@ export const useAppStore = defineStore('app', () => {
   }
 
   /** A fresh capture replaces the session: it becomes the first source. */
-  function setLoadedFile(path: string, packets: number, skippedInFile?: SkippedPackets) {
+  function setLoadedFile(path: string, packets: number, counts?: ImportCounts) {
     loadedFile.value = path
     sources.value = [{ path, packets }]
-    skipped.value = skippedInFile ?? { ipv6: 0, arp: 0, other: 0 }
+    skipped.value = counts?.skipped ?? emptySkipped()
+    decoded.value = counts?.decoded ?? emptyDecoded()
+    framesRead.value = counts?.frames_read ?? 0
     error.value = null
   }
 
   /** An appended capture joins the existing source list. */
-  function addSource(path: string, packets: number, skippedInFile?: SkippedPackets) {
+  function addSource(path: string, packets: number, counts?: ImportCounts) {
     sources.value = [...sources.value, { path, packets }]
-    if (skippedInFile) {
-      skipped.value = {
-        ipv6: skipped.value.ipv6 + skippedInFile.ipv6,
-        arp: skipped.value.arp + skippedInFile.arp,
-        other: skipped.value.other + skippedInFile.other,
-      }
+    if (counts) {
+      skipped.value = addSkipped(skipped.value, counts.skipped)
+      decoded.value = addDecoded(decoded.value, counts.decoded)
+      framesRead.value += counts.frames_read
     }
   }
 
@@ -175,7 +186,9 @@ export const useAppStore = defineStore('app', () => {
     loading.value = false
     loadedFile.value = null
     sources.value = []
-    skipped.value = { ipv6: 0, arp: 0, other: 0 }
+    skipped.value = emptySkipped()
+    decoded.value = emptyDecoded()
+    framesRead.value = 0
     findingsCollapsed.value = false
     error.value = null
     importProgress.value = 0
@@ -197,6 +210,8 @@ export const useAppStore = defineStore('app', () => {
     dragHovering,
     findingsCollapsed,
     skipped,
+    decoded,
+    framesRead,
     currentFile,
     totalFiles,
     displayStage,

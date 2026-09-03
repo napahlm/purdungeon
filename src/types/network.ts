@@ -16,7 +16,9 @@ export type Role =
 export interface Host {
   id: number
   mac_address: string
-  ip_address: string
+  /** null for a device known only by its MAC (heard in LLDP/CDP/DHCP, never in IP traffic). */
+  ip_address: string | null
+  /** Best-evidenced name from DHCP, NetBIOS, mDNS, LLMNR, SNMP, LLDP or CDP. */
   hostname: string | null
   vendor: string | null
   role: Role
@@ -26,6 +28,8 @@ export interface Host {
   role_override: Role | null
   level_override: number | null
   protocols: string
+  /** Comma-joined link-layer protocols the host was seen in (e.g. `arp`). */
+  link_protocols: string
   is_external: boolean
   first_seen: number
   last_seen: number
@@ -72,14 +76,22 @@ export function effectiveLevel(host: Host): number | null {
   return host.level_override ?? host.purdue_level
 }
 
+/** What to call a device: its address, else its name, else its MAC. */
+export function hostLabel(host: Host): string {
+  return host.ip_address ?? host.hostname ?? host.mac_address
+}
+
 export interface Connection {
   id: number
   src_host_id: number
   dst_host_id: number
   src_port: number
   dst_port: number
+  /** IP protocol name: TCP, UDP, ICMP, ICMPv6, IGMP, VRRP, … */
   protocol: string
   app_protocol: string | null
+  /** 802.1Q VLAN id the conversation was seen on; null when untagged. */
+  vlan_id: number | null
   packet_count: number
   byte_count: number
   first_seen: number
@@ -101,11 +113,31 @@ export interface HostConnection {
   last_seen: number
 }
 
+/** One thing a protocol said about a device. Every identity claim traces
+ *  back to rows like this. */
+export interface Evidence {
+  id: number
+  host_id: number
+  kind: string
+  value: string
+  source_protocol: string
+  first_seen: number
+  last_seen: number
+  /** 0–1: how far the value can be trusted to describe this device. */
+  confidence: number
+  /** How many packets said so. */
+  count: number
+}
+
 export interface HostDetail {
   host: Host
   connections: HostConnection[]
   total_packets: number
   total_bytes: number
+  /** Distinct VLAN ids across the host's conversations, sorted. */
+  vlans: number[]
+  /** Everything the capture said about this device, by kind then confidence. */
+  evidence: Evidence[]
 }
 
 export interface ModbusFunctionStat {
@@ -159,17 +191,34 @@ export interface HistogramBucket {
   byte_count: number
 }
 
-/** Packets read but not imported, by reason. */
-export interface SkippedPackets {
+/** Frames that were decoded, by what they carried. ARP, LLDP and CDP add to
+ *  the packet count but carry no IP conversation. */
+export interface LinkLayerCounts {
+  ipv4: number
   ipv6: number
   arp: number
-  other: number
+  lldp: number
+  cdp: number
 }
 
+/** Frames read but not decoded, by reason. */
+export interface SkippedPackets {
+  unsupported_link_type: number
+  other_ethertype: number
+  fragment: number
+  truncated: number
+  malformed: number
+  no_timestamp: number
+}
+
+/** `frames_read === packet_count + sum(skipped)` and
+ *  `packet_count === sum(decoded)` always hold. */
 export interface ImportResult {
+  frames_read: number
+  packet_count: number
+  decoded: LinkLayerCounts
+  skipped: SkippedPackets
   host_count: number
   connection_count: number
-  packet_count: number
-  skipped: SkippedPackets
   time_range: [number, number]
 }

@@ -2,7 +2,7 @@
 import { ref, watch, computed } from 'vue'
 import { useTopologyStore } from '@/stores/topology'
 import { useTauri } from '@/composables/useTauri'
-import type { ModbusConversation } from '@/types/network'
+import { hostLabel, type ModbusConversation } from '@/types/network'
 import { formatBytes, formatTime, formatCadence } from '@/utils/format'
 import DetailPanel from './ui/DetailPanel.vue'
 import PanelSection from './ui/PanelSection.vue'
@@ -93,7 +93,9 @@ function openHost(hostId: number) {
             class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-bg-elevated"
             @click="openHost(srcHost.id)"
           >
-            <span class="flex-1 font-mono text-text-primary">{{ srcHost.ip_address }}</span>
+            <span class="flex-1 truncate font-mono text-text-primary">{{
+              hostLabel(srcHost)
+            }}</span>
             <span class="font-mono text-xs text-text-muted">:{{ connection.src_port }}</span>
           </button>
           <div class="flex items-center gap-1 pl-2 text-xs text-text-muted">
@@ -117,7 +119,9 @@ function openHost(hostId: number) {
             class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-bg-elevated"
             @click="openHost(dstHost.id)"
           >
-            <span class="flex-1 font-mono text-text-primary">{{ dstHost.ip_address }}</span>
+            <span class="flex-1 truncate font-mono text-text-primary">{{
+              hostLabel(dstHost)
+            }}</span>
             <span class="font-mono text-xs text-text-muted">:{{ connection.dst_port }}</span>
           </button>
         </div>
@@ -136,6 +140,9 @@ function openHost(hostId: number) {
           </DetailRow>
           <DetailRow label="Last seen">
             {{ formatTime(connection.last_seen) }}
+          </DetailRow>
+          <DetailRow v-if="connection.vlan_id !== null" label="VLAN" mono>
+            {{ connection.vlan_id }}
           </DetailRow>
         </div>
       </PanelSection>

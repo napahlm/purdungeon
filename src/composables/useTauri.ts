@@ -15,6 +15,7 @@ import type {
 import { useAppStore, type ImportStage } from '@/stores/app'
 import { useTopologyStore } from '@/stores/topology'
 import { useTimelineStore } from '@/stores/timeline'
+import { describeSkipped } from '@/utils/skipped'
 
 const ACCEPTED_EXTENSIONS = ['pcap', 'pcapng', 'cap']
 
@@ -29,6 +30,8 @@ export function isCaptureFile(path: string): boolean {
 /** Turn backend errors into something a person can act on. */
 function humanizeError(raw: string): string {
   const msg = raw.toLowerCase()
+  // The backend's link-type message is specific and actionable; keep it.
+  if (msg.includes('link type')) return raw.replace(/^parse error: /i, '')
   if (msg.includes('file too small') || msg.includes('reader') || msg.includes('parse error')) {
     return 'This file doesn’t look like a packet capture. purdungeon reads .pcap and .pcapng files.'
   }
@@ -36,6 +39,19 @@ function humanizeError(raw: string): string {
     return 'Couldn’t open that file. Check that it still exists and is readable.'
   }
   return raw
+}
+
+/** Why a fresh import produced nothing, with the reasons the backend counted. */
+function noTrafficMessage(result: ImportResult): string {
+  const reasons = describeSkipped(result.skipped)
+  const detail =
+    reasons.length > 0
+      ? ` (${result.frames_read.toLocaleString()} frames read: ${reasons.join(', ')})`
+      : ''
+  return (
+    `No readable network traffic in this capture${detail}. purdungeon reads IPv4, IPv6 and ARP ` +
+    'over Ethernet, VLAN-tagged, Linux cooked, raw-IP and loopback captures.'
+  )
 }
 
 export function useTauri() {
@@ -160,16 +176,14 @@ export function useTauri() {
         // On a fresh load that's an error; on an append it just means this file
         // added nothing — leave the existing view in place.
         if (mode === 'replace') {
-          appStore.setError(
-            'No readable network traffic in this capture. purdungeon currently reads IPv4 over Ethernet.',
-          )
+          appStore.setError(noTrafficMessage(result))
         } else {
-          appStore.addSource(path, 0, result.skipped)
+          appStore.addSource(path, 0, result)
           outcome = 'loaded'
         }
       } else {
-        if (mode === 'replace') appStore.setLoadedFile(path, result.packet_count, result.skipped)
-        else appStore.addSource(path, result.packet_count, result.skipped)
+        if (mode === 'replace') appStore.setLoadedFile(path, result.packet_count, result)
+        else appStore.addSource(path, result.packet_count, result)
         if (refresh) {
           await refreshView(mode === 'replace')
           outcome = 'refreshed'

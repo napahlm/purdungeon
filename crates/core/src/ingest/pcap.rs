@@ -1,7 +1,13 @@
+//! Capture ingest: stream a pcap/pcapng file, decode every frame, and fold
+//! hosts, flows, packets and identity evidence into the session database.
+//! Nothing is dropped silently — every record ends up in `ImportResult`
+//! either as decoded or as a counted reason for skipping, and the two always
+//! add up to the frames read.
+
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
-use std::net::Ipv4Addr;
+use std::net::IpAddr;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -9,16 +15,45 @@ use pcap_parser::traits::PcapReaderIterator;
 use pcap_parser::*;
 use rusqlite::params;
 
+use crate::ingest::evidence::{kind, EvidenceSink, Fact};
+use crate::ingest::frame::{self, Frame, IpFrame, Transport};
+use crate::ingest::identity::{self, DhcpFacts, L2Facts, UdpFacts};
+use crate::ingest::link::{self, LinkDecode, Macs};
 use crate::oui;
-use crate::protocols::modbus;
+use crate::protocols::{arp, ip_proto, modbus};
 use crate::store::{queries, schema};
-use crate::types::{ImportResult, SkippedPackets};
+use crate::types::{ImportResult, LinkLayerCounts, SkippedPackets};
 use crate::CoreError;
 
 /// The reader buffer must hold one complete block — a full-snaplen (65535 B)
 /// packet plus block framing — or parsing aborts with a buffer-too-small
 /// error. 1 MB also leaves room for jumbo frames.
 const READER_BUFFER_SIZE: usize = 1 << 20;
+
+/// Link-layer protocols a host has been seen in, kept as bit flags on the
+/// host cache and stored comma-joined in `hosts.link_protocols`.
+pub const LINK_ARP: u8 = 1;
+pub const LINK_LLDP: u8 = 2;
+pub const LINK_CDP: u8 = 4;
+const LINK_NAMES: [(u8, &str); 3] = [(LINK_ARP, "arp"), (LINK_LLDP, "lldp"), (LINK_CDP, "cdp")];
+
+fn link_names(flags: u8) -> String {
+    LINK_NAMES
+        .iter()
+        .filter(|(bit, _)| flags & bit != 0)
+        .map(|(_, name)| *name)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn link_flags(names: &str) -> u8 {
+    names.split(',').fold(0, |acc, n| {
+        acc | LINK_NAMES
+            .iter()
+            .find(|(_, name)| *name == n)
+            .map_or(0, |(bit, _)| *bit)
+    })
+}
 
 /// Parse a capture into a fresh session, clearing any existing data first.
 pub fn parse_pcap(
@@ -40,17 +75,50 @@ pub fn append_pcap(
     ingest(path, conn, progress, true)
 }
 
-/// Directional flow identity: (src ip, dst ip, src port, dst port, protocol).
-type FlowKey = (u32, u32, u16, u16, u8);
+/// Directional flow identity: (src ip, dst ip, src port, dst port, IANA ip
+/// protocol number). Port-less protocols use 0/0.
+type FlowKey = (IpAddr, IpAddr, u16, u16, u8);
 
-/// IP protocol numbers used as the last element of a `FlowKey`. The DB stores
-/// the display name; these keep the hot-path key free of strings.
-fn protocol_code(protocol: &str) -> u8 {
-    match protocol {
-        "TCP" => 6,
-        "UDP" => 17,
-        "ICMP" => 1,
-        _ => 0,
+/// Facts waiting for the host they belong to, each with when it was seen.
+type PendingFacts = Vec<(Fact, f64)>;
+type PendingAnnouncements = Vec<(L2Facts, f64)>;
+
+/// Broadcast, multicast and unspecified addresses are not devices; their
+/// MACs are group addresses or a client's before it has an address.
+fn is_pseudo_host(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => v4.is_unspecified() || v4.is_multicast() || v4.is_broadcast(),
+        IpAddr::V6(v6) => v6.is_unspecified() || v6.is_multicast(),
+    }
+}
+
+/// Where a MAC address for a host was learned, and how much that is worth.
+/// A frame's source MAC is the last hop's — a router's for anything beyond
+/// the local segment — whereas ARP, DHCP and LLDP/CDP name the device's own.
+#[derive(Clone, Copy)]
+enum MacSource {
+    Frame,
+    Arp,
+    Dhcp,
+    Announcement(&'static str),
+}
+
+impl MacSource {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Frame => "ethernet",
+            Self::Arp => "arp",
+            Self::Dhcp => "dhcp",
+            Self::Announcement(source) => source,
+        }
+    }
+
+    fn confidence(self) -> f64 {
+        match self {
+            Self::Frame => 0.5,
+            Self::Arp => 0.95,
+            Self::Dhcp | Self::Announcement(_) => 0.9,
+        }
     }
 }
 
@@ -60,6 +128,32 @@ struct HostAgg {
     id: i64,
     first_seen: f64,
     last_seen: f64,
+    /// Link-layer protocols this parse saw the host in.
+    link_seen: u8,
+    /// What the stored row already lists, so the flush only writes changes.
+    link_stored: u8,
+    /// The last MAC a frame carried for this host, so the hot path only
+    /// records evidence when it changes.
+    last_frame_mac: Option<[u8; 6]>,
+}
+
+impl HostAgg {
+    fn new(id: i64, timestamp: f64, link: u8) -> Self {
+        Self {
+            id,
+            first_seen: timestamp,
+            last_seen: timestamp,
+            link_seen: link,
+            link_stored: 0,
+            last_frame_mac: None,
+        }
+    }
+
+    fn touch(&mut self, timestamp: f64, link: u8) {
+        self.first_seen = self.first_seen.min(timestamp);
+        self.last_seen = self.last_seen.max(timestamp);
+        self.link_seen |= link;
+    }
 }
 
 /// Per-flow aggregate, same idea. `packets`/`bytes` count only this parse —
@@ -76,12 +170,29 @@ struct FlowAgg {
 
 #[derive(Default)]
 struct IngestState {
-    hosts: HashMap<u32, HostAgg>,
+    hosts: HashMap<IpAddr, HostAgg>,
+    /// Devices known only by MAC: seen in LLDP, CDP or DHCP but never in IP
+    /// traffic the capture point could see.
+    mac_hosts: HashMap<[u8; 6], HostAgg>,
+    /// MAC → hosts that ARP, DHCP or an announcement say own it.
+    mac_index: HashMap<[u8; 6], Vec<i64>>,
+    /// MAC → hosts whose frames carried it (possibly a router's MAC).
+    frame_mac_index: HashMap<[u8; 6], Vec<i64>>,
     flows: HashMap<FlowKey, FlowAgg>,
+    evidence: EvidenceSink,
+    /// DHCP client facts waiting for the exchange to name the client.
+    dhcp_pending: HashMap<[u8; 6], PendingFacts>,
+    /// LLDP/CDP announcements by sender MAC, attributed once every host is
+    /// known so a device is not split into a MAC-only asset and an IP one.
+    l2_pending: HashMap<[u8; 6], PendingAnnouncements>,
+    /// Every record read from the file, whatever became of it.
+    frames_read: usize,
+    /// Frames that became rows in `packets`.
     packet_count: usize,
+    decoded: LinkLayerCounts,
     skipped: SkippedPackets,
-    /// First link type other than Ethernet seen, for the error message when a
-    /// capture yields nothing readable.
+    /// First unreadable link type seen, for the error message when a capture
+    /// yields nothing at all.
     unsupported_linktype: Option<String>,
     min_ts: f64,
     max_ts: f64,
@@ -99,9 +210,9 @@ impl IngestState {
 
 fn unsupported_linktype_error(linktype: &str) -> CoreError {
     CoreError::Parse(format!(
-        "this capture uses link type {linktype}; purdungeon reads Ethernet \
-         captures — convert it with Wireshark or editcap, or re-capture on an \
-         Ethernet interface"
+        "this capture uses link type {linktype}; purdungeon reads Ethernet, \
+         Linux cooked (tcpdump -i any), raw IP and loopback captures — convert \
+         it with Wireshark or editcap, or re-capture on an Ethernet interface"
     ))
 }
 
@@ -147,15 +258,27 @@ fn ingest(
         parse_legacy_data(reader, &tx, &mut state, progress)?;
     }
 
-    // A capture that only contained unreadable link types should say so
-    // rather than silently import as empty.
-    if state.packet_count == 0 {
+    debug_assert_eq!(
+        state.frames_read,
+        state.packet_count + state.skipped.total(),
+        "frame accounting must reconcile"
+    );
+    debug_assert_eq!(state.packet_count, state.decoded.total());
+
+    // A capture whose every frame sits on a link type we cannot read should
+    // say so rather than import as empty.
+    if state.packet_count == 0
+        && state.frames_read > 0
+        && state.skipped.unsupported_link_type == state.frames_read
+    {
         if let Some(linktype) = &state.unsupported_linktype {
             return Err(unsupported_linktype_error(linktype));
         }
     }
 
+    resolve_pending(&tx, &mut state)?;
     flush_aggregates(&tx, &state)?;
+    state.evidence.flush(&tx)?;
 
     // Recreate indexes after all data is inserted
     schema::create_packet_indexes(&tx)?;
@@ -167,35 +290,65 @@ fn ingest(
     }
 
     Ok(ImportResult {
-        host_count: state.hosts.len(),
-        connection_count: state.flows.len(),
+        frames_read: state.frames_read,
         packet_count: state.packet_count,
+        decoded: state.decoded,
         skipped: state.skipped,
+        host_count: state.hosts.len() + state.mac_hosts.len(),
+        connection_count: state.flows.len(),
         time_range: (state.min_ts, state.max_ts),
     })
+}
+
+/// Addresses are only ever written by `IpAddr::to_string`, so a stored row
+/// that fails to parse means the session is corrupt — better to say so than
+/// to skip it and hit the UNIQUE constraint on the next insert.
+fn parse_stored_ip(text: &str) -> Result<IpAddr, CoreError> {
+    text.parse().map_err(|_| {
+        CoreError::Internal(format!("stored host address {text:?} is not an IP address"))
+    })
+}
+
+fn parse_mac(text: &str) -> Option<[u8; 6]> {
+    let mut out = [0u8; 6];
+    let mut parts = text.split(':');
+    for slot in &mut out {
+        *slot = u8::from_str_radix(parts.next()?, 16).ok()?;
+    }
+    parts.next().is_none().then_some(out)
 }
 
 /// Rebuild the host and flow caches from the session so an append reuses
 /// existing ids. Aggregates start empty — the flush only adds what this
 /// parse contributes on top of the stored rows.
 fn preload_caches(conn: &rusqlite::Connection, state: &mut IngestState) -> Result<(), CoreError> {
-    let mut stmt = conn.prepare("SELECT ip_address, id FROM hosts")?;
+    let mut stmt = conn.prepare("SELECT id, ip_address, mac_address, link_protocols FROM hosts")?;
     let rows = stmt.query_map([], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, Option<String>>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+        ))
     })?;
     for row in rows {
-        let (ip, id) = row?;
-        let Ok(addr) = ip.parse::<Ipv4Addr>() else {
-            continue;
-        };
-        state.hosts.insert(
-            u32::from(addr),
-            HostAgg {
-                id,
-                first_seen: f64::MAX,
-                last_seen: f64::MIN,
-            },
-        );
+        let (id, ip, mac, links) = row?;
+        let mut agg = HostAgg::new(id, f64::MAX, 0);
+        agg.last_seen = f64::MIN;
+        agg.link_stored = link_flags(&links);
+        if let Some(ip) = ip {
+            let ip = parse_stored_ip(&ip)?;
+            if let Some(mac) = parse_mac(&mac).filter(|_| !is_pseudo_host(ip)) {
+                agg.last_frame_mac = Some(mac);
+                state.frame_mac_index.entry(mac).or_default().push(id);
+            }
+            state.hosts.insert(ip, agg);
+        } else {
+            let mac = parse_mac(&mac).ok_or_else(|| {
+                CoreError::Internal(format!("stored MAC-only host {mac:?} has no valid MAC"))
+            })?;
+            state.mac_hosts.insert(mac, agg);
+        }
     }
 
     let mut stmt = conn.prepare(
@@ -217,15 +370,17 @@ fn preload_caches(conn: &rusqlite::Connection, state: &mut IngestState) -> Resul
     })?;
     for row in rows {
         let (id, src_ip, src_port, dst_ip, dst_port, protocol, app_protocol) = row?;
-        let (Ok(src), Ok(dst)) = (src_ip.parse::<Ipv4Addr>(), dst_ip.parse::<Ipv4Addr>()) else {
-            continue;
-        };
+        let ip_proto = ip_proto::number(&protocol).ok_or_else(|| {
+            CoreError::Internal(format!(
+                "stored protocol {protocol:?} has no IP protocol number"
+            ))
+        })?;
         let key = (
-            u32::from(src),
-            u32::from(dst),
+            parse_stored_ip(&src_ip)?,
+            parse_stored_ip(&dst_ip)?,
             src_port,
             dst_port,
-            protocol_code(&protocol),
+            ip_proto,
         );
         state.flows.insert(
             key,
@@ -253,9 +408,15 @@ fn flush_aggregates(conn: &rusqlite::Connection, state: &IngestState) -> Result<
             last_seen = MAX(last_seen, ?2)
          WHERE id = ?3",
     )?;
-    for agg in state.hosts.values() {
+    let mut link_stmt =
+        conn.prepare_cached("UPDATE hosts SET link_protocols = ?1 WHERE id = ?2")?;
+    for agg in state.hosts.values().chain(state.mac_hosts.values()) {
         if agg.first_seen <= agg.last_seen {
             host_stmt.execute(params![agg.first_seen, agg.last_seen, agg.id])?;
+        }
+        let links = agg.link_seen | agg.link_stored;
+        if links != agg.link_stored {
+            link_stmt.execute(params![link_names(links), agg.id])?;
         }
     }
 
@@ -284,6 +445,75 @@ fn flush_aggregates(conn: &rusqlite::Connection, state: &IngestState) -> Result<
         }
     }
     Ok(())
+}
+
+/// Attribute the facts that could not be placed while parsing: DHCP client
+/// facts whose exchange never named an address, and LLDP/CDP announcements,
+/// which are keyed by MAC. Done last so every IP host is already known and a
+/// device is not split into a MAC-only asset and an IP one.
+fn resolve_pending(conn: &rusqlite::Connection, state: &mut IngestState) -> Result<(), CoreError> {
+    let mut dhcp: Vec<([u8; 6], PendingFacts)> = state.dhcp_pending.drain().collect();
+    dhcp.sort_by_key(|(mac, _)| *mac);
+    for (mac, facts) in dhcp {
+        let first_ts = facts.iter().map(|(_, ts)| *ts).fold(f64::MAX, f64::min);
+        let id = host_for_mac(conn, state, mac, 0, first_ts)?;
+        for (fact, ts) in facts {
+            state.evidence.record(id, "dhcp", fact, ts);
+        }
+    }
+
+    let mut announcements: Vec<([u8; 6], PendingAnnouncements)> =
+        state.l2_pending.drain().collect();
+    announcements.sort_by_key(|(mac, _)| *mac);
+    for (mac, items) in announcements {
+        for (l2, ts) in items {
+            let link = if l2.source == "lldp" {
+                LINK_LLDP
+            } else {
+                LINK_CDP
+            };
+            let id = match l2.management.first() {
+                Some(address) => upsert_host(
+                    conn,
+                    state,
+                    *address,
+                    Some(&mac),
+                    MacSource::Announcement(l2.source),
+                    link,
+                    ts,
+                )?,
+                None => host_for_mac(conn, state, mac, link, ts)?,
+            };
+            state.evidence.record_all(id, l2.source, l2.facts, ts);
+        }
+    }
+    Ok(())
+}
+
+/// The host a MAC belongs to: the one ARP/DHCP/announcements say owns it,
+/// else the only host whose frames carried it, else a new MAC-only asset.
+fn host_for_mac(
+    conn: &rusqlite::Connection,
+    state: &mut IngestState,
+    mac: [u8; 6],
+    link: u8,
+    timestamp: f64,
+) -> Result<i64, CoreError> {
+    let known = state
+        .mac_index
+        .get(&mac)
+        .or_else(|| state.frame_mac_index.get(&mac))
+        .and_then(|ids| match ids.as_slice() {
+            [only] => Some(*only),
+            _ => None,
+        });
+    if let Some(id) = known {
+        if let Some(agg) = state.hosts.values_mut().find(|agg| agg.id == id) {
+            agg.touch(timestamp, link);
+        }
+        return Ok(id);
+    }
+    upsert_mac_host(conn, state, mac, link, timestamp)
 }
 
 /// Per-interface decoding parameters from an Interface Description Block.
@@ -322,29 +552,26 @@ fn parse_pcapng_data<R: Read>(
                         });
                     }
                     PcapBlockOwned::NG(Block::EnhancedPacket(epb)) => {
-                        let info = if_info.get(epb.if_id as usize);
-                        let linktype = info.map_or(Linktype::ETHERNET, |i| i.linktype);
-                        if linktype == Linktype::ETHERNET {
-                            let (ts_offset, resolution) =
-                                info.map_or((0, 1_000_000), |i| (i.ts_offset, i.resolution));
-                            let ts = epb.decode_ts_f64(ts_offset, resolution);
+                        // A packet on an interface this section never
+                        // described has no link type or clock to decode with.
+                        if let Some(info) = if_info.get(epb.if_id as usize) {
+                            let ts = epb.decode_ts_f64(info.ts_offset, info.resolution);
                             let orig_len = epb.origlen.max(epb.caplen);
                             // EPB data is padded to a 32-bit boundary; the
                             // real capture length is caplen.
                             let data = epb.data.get(..epb.caplen as usize).unwrap_or(epb.data);
-                            process_packet(data, orig_len, ts, conn, state)?;
+                            process_frame(data, orig_len, ts, info.linktype, conn, state)?;
                         } else {
-                            state.skipped.other += 1;
-                            state
-                                .unsupported_linktype
-                                .get_or_insert_with(|| linktype.to_string());
+                            state.frames_read += 1;
+                            state.skipped.malformed += 1;
                         }
                     }
                     // Simple Packet Blocks carry no timestamp; inventing one
                     // would poison first/last-seen, so they are skipped and
                     // counted instead.
                     PcapBlockOwned::NG(Block::SimplePacket(_)) => {
-                        state.skipped.other += 1;
+                        state.frames_read += 1;
+                        state.skipped.no_timestamp += 1;
                     }
                     _ => {}
                 }
@@ -356,6 +583,13 @@ fn parse_pcapng_data<R: Read>(
                 reader
                     .refill()
                     .map_err(|e| CoreError::Parse(format!("refill: {e}")))?;
+            }
+            // The file ends in the middle of a block: the capture tool was
+            // killed mid-write. Keep what was read and count the stub.
+            Err(PcapError::UnexpectedEof) => {
+                state.frames_read += 1;
+                state.skipped.malformed += 1;
+                break;
             }
             Err(e) => return Err(CoreError::Parse(format!("pcapng: {e}"))),
         }
@@ -375,15 +609,17 @@ fn parse_legacy_data<R: Read>(
     // tcpdump's nanosecond variant (magic 0xa1b23c4d) stores nanoseconds in
     // the sub-second field; everything else stores microseconds.
     let mut ts_divisor = 1_000_000.0;
+    let mut linktype = Linktype::ETHERNET;
 
     loop {
         match reader.next() {
             Ok((offset, block)) => {
                 match block {
                     PcapBlockOwned::LegacyHeader(header) => {
-                        if header.network != Linktype::ETHERNET {
-                            return Err(unsupported_linktype_error(&header.network.to_string()));
-                        }
+                        // The upper half of the link-type word carries the
+                        // FCS length and a flag bit (draft-ietf-opsawg-pcap
+                        // §4); only the low 16 bits name the link type.
+                        linktype = Linktype(header.network.0 & 0xFFFF);
                         if header.is_nanosecond_precision() {
                             ts_divisor = 1_000_000_000.0;
                         }
@@ -391,7 +627,7 @@ fn parse_legacy_data<R: Read>(
                     PcapBlockOwned::Legacy(packet) => {
                         let ts = f64::from(packet.ts_sec) + f64::from(packet.ts_usec) / ts_divisor;
                         let orig_len = packet.origlen.max(packet.caplen);
-                        process_packet(packet.data, orig_len, ts, conn, state)?;
+                        process_frame(packet.data, orig_len, ts, linktype, conn, state)?;
                     }
                     PcapBlockOwned::NG(_) => {}
                 }
@@ -404,79 +640,195 @@ fn parse_legacy_data<R: Read>(
                     .refill()
                     .map_err(|e| CoreError::Parse(format!("refill: {e}")))?;
             }
+            Err(PcapError::UnexpectedEof) => {
+                state.frames_read += 1;
+                state.skipped.malformed += 1;
+                break;
+            }
             Err(e) => return Err(CoreError::Parse(format!("pcap: {e}"))),
         }
     }
     Ok(())
 }
 
-/// Decode one Ethernet frame and fold it into the session. `orig_len` is the
+/// Decode one capture record and fold it into the session. `orig_len` is the
 /// packet's length on the wire — captures taken with a snaplen truncate
 /// `data`, and byte counts must reflect the wire, not the truncation.
-fn process_packet(
+fn process_frame(
     data: &[u8],
     orig_len: u32,
     timestamp: f64,
+    linktype: Linktype,
     conn: &rusqlite::Connection,
     state: &mut IngestState,
 ) -> Result<(), CoreError> {
-    if data.len() < 14 {
-        state.skipped.other += 1;
+    state.frames_read += 1;
+    // A zero or negative timestamp cannot be placed on the timeline, and
+    // recording it would pin first-seen to 1970 for every host in the frame.
+    if timestamp <= 0.0 {
+        state.skipped.no_timestamp += 1;
         return Ok(());
     }
-    // Lax parsing tolerates snaplen truncation: headers still decode and the
-    // payload is whatever was captured, instead of dropping the packet.
-    let Ok(parsed) = etherparse::LaxSlicedPacket::from_ethernet(data) else {
-        state.skipped.other += 1;
-        return Ok(());
-    };
+    let cut_by_snaplen = (data.len() as u32) < orig_len;
 
-    let (src_ip, dst_ip) = match &parsed.net {
-        Some(etherparse::LaxNetSlice::Ipv4(ipv4)) => {
-            let h = ipv4.header();
-            (u32::from(h.source_addr()), u32::from(h.destination_addr()))
-        }
-        Some(etherparse::LaxNetSlice::Ipv6(_)) => {
-            state.skipped.ipv6 += 1;
+    let (parsed, macs) = match link::decode(linktype, data) {
+        LinkDecode::Ok { parsed, macs } => (parsed, macs),
+        LinkDecode::UnsupportedLinkType => {
+            state.skipped.unsupported_link_type += 1;
+            state
+                .unsupported_linktype
+                .get_or_insert_with(|| linktype.to_string());
             return Ok(());
         }
-        None => {
-            // 0x0806 is the ARP ethertype — worth its own count because
-            // ARP-only devices are invisible to an IPv4-based inventory.
-            if data[12..14] == [0x08, 0x06] {
-                state.skipped.arp += 1;
+        LinkDecode::TooShort => {
+            if cut_by_snaplen {
+                state.skipped.truncated += 1;
             } else {
-                state.skipped.other += 1;
+                state.skipped.malformed += 1;
             }
             return Ok(());
         }
-    };
-
-    let (src_port, dst_port, protocol, payload): (u16, u16, &str, &[u8]) = match &parsed.transport {
-        Some(etherparse::TransportSlice::Tcp(tcp)) => (
-            tcp.source_port(),
-            tcp.destination_port(),
-            "TCP",
-            tcp.payload(),
-        ),
-        Some(etherparse::TransportSlice::Udp(udp)) => (
-            udp.source_port(),
-            udp.destination_port(),
-            "UDP",
-            udp.payload(),
-        ),
-        Some(etherparse::TransportSlice::Icmpv4(_)) => (0, 0, "ICMP", &[] as &[u8]),
-        _ => {
-            state.skipped.other += 1;
+        LinkDecode::Malformed => {
+            state.skipped.malformed += 1;
             return Ok(());
         }
     };
 
+    let classified = frame::classify(&parsed, macs, cut_by_snaplen);
+    match classified.frame {
+        Frame::Ip(ip) => ingest_ip(
+            conn,
+            state,
+            &ip,
+            classified.macs,
+            classified.vlan,
+            orig_len,
+            timestamp,
+        ),
+        Frame::Fragment { src, dst } => {
+            upsert_pair(conn, state, (src, dst), classified.macs, timestamp)?;
+            state.skipped.fragment += 1;
+            Ok(())
+        }
+        Frame::Arp(info) => {
+            ingest_arp(conn, state, info, timestamp)?;
+            insert_packet(conn, state, None, timestamp, orig_len)?;
+            state.decoded.arp += 1;
+            Ok(())
+        }
+        Frame::Lldp(info) => {
+            queue_announcement(
+                state,
+                classified.macs.src,
+                identity::lldp_facts(&info),
+                timestamp,
+            );
+            insert_packet(conn, state, None, timestamp, orig_len)?;
+            state.decoded.lldp += 1;
+            Ok(())
+        }
+        Frame::Cdp(info) => {
+            queue_announcement(
+                state,
+                classified.macs.src,
+                identity::cdp_facts(&info),
+                timestamp,
+            );
+            insert_packet(conn, state, None, timestamp, orig_len)?;
+            state.decoded.cdp += 1;
+            Ok(())
+        }
+        Frame::OtherEthertype => {
+            state.skipped.other_ethertype += 1;
+            Ok(())
+        }
+        Frame::Truncated { hosts } => {
+            if let Some(pair) = hosts {
+                upsert_pair(conn, state, pair, classified.macs, timestamp)?;
+            }
+            state.skipped.truncated += 1;
+            Ok(())
+        }
+        Frame::Malformed { hosts } => {
+            if let Some(pair) = hosts {
+                upsert_pair(conn, state, pair, classified.macs, timestamp)?;
+            }
+            state.skipped.malformed += 1;
+            Ok(())
+        }
+    }
+}
+
+/// The hosts an ARP packet vouches for, with the MAC it names for each.
+fn ingest_arp(
+    conn: &rusqlite::Connection,
+    state: &mut IngestState,
+    info: Option<arp::ArpInfo>,
+    timestamp: f64,
+) -> Result<(), CoreError> {
+    let Some(info) = info else {
+        return Ok(());
+    };
+    for (ip, mac) in arp::hosts_from(&info) {
+        upsert_host(
+            conn,
+            state,
+            IpAddr::V4(ip),
+            Some(&mac),
+            MacSource::Arp,
+            LINK_ARP,
+            timestamp,
+        )?;
+    }
+    Ok(())
+}
+
+/// Park an LLDP/CDP announcement under its sender MAC until the end of the
+/// parse, when every host is known and it can be attributed.
+fn queue_announcement(
+    state: &mut IngestState,
+    sender: Option<[u8; 6]>,
+    facts: L2Facts,
+    timestamp: f64,
+) {
+    if let Some(mac) = sender {
+        state
+            .l2_pending
+            .entry(mac)
+            .or_default()
+            .push((facts, timestamp));
+    }
+}
+
+/// An IP packet: both hosts, its flow, any Modbus frames, a packet row, and
+/// whatever identity its UDP payload gives away.
+fn ingest_ip(
+    conn: &rusqlite::Connection,
+    state: &mut IngestState,
+    ip: &IpFrame<'_>,
+    macs: Macs,
+    vlan: Option<u16>,
+    orig_len: u32,
+    timestamp: f64,
+) -> Result<(), CoreError> {
+    let (src_port, dst_port, tcp_payload) = match ip.transport {
+        Transport::Tcp {
+            src_port,
+            dst_port,
+            payload,
+        } => (src_port, dst_port, Some(payload)),
+        Transport::Udp {
+            src_port, dst_port, ..
+        } => (src_port, dst_port, None),
+        Transport::Portless => (0, 0, None),
+    };
+
     let is_modbus_request = dst_port == modbus::MODBUS_PORT;
-    let modbus_frames = if protocol == "TCP" && modbus::is_modbus_tcp(src_port, dst_port, payload) {
-        modbus::parse_frames(payload, is_modbus_request)
-    } else {
-        Vec::new()
+    let modbus_frames = match tcp_payload {
+        Some(payload) if modbus::is_modbus_tcp(src_port, dst_port, payload) => {
+            modbus::parse_frames(payload, is_modbus_request)
+        }
+        _ => Vec::new(),
     };
     let app_protocol = if modbus_frames.is_empty() {
         None
@@ -484,27 +836,36 @@ fn process_packet(
         Some("modbus")
     };
 
-    if timestamp > 0.0 {
-        if timestamp < state.min_ts {
-            state.min_ts = timestamp;
-        }
-        if timestamp > state.max_ts {
-            state.max_ts = timestamp;
-        }
-    }
-
     // Hosts and flows accumulate in memory; only first sight touches the DB.
-    let src_host_id = upsert_host(conn, state, src_ip, &data[6..12], timestamp)?;
-    let dst_host_id = upsert_host(conn, state, dst_ip, &data[0..6], timestamp)?;
+    let src_host_id = upsert_host(
+        conn,
+        state,
+        ip.src,
+        macs.src.as_ref(),
+        MacSource::Frame,
+        0,
+        timestamp,
+    )?;
+    let dst_host_id = upsert_host(
+        conn,
+        state,
+        ip.dst,
+        macs.dst.as_ref(),
+        MacSource::Frame,
+        0,
+        timestamp,
+    )?;
 
-    let flow_key = (src_ip, dst_ip, src_port, dst_port, protocol_code(protocol));
+    let protocol = ip_proto::name(ip.ip_proto);
+    let flow_key = (ip.src, ip.dst, src_port, dst_port, ip.ip_proto);
     let conn_id = upsert_connection(
         conn,
         state,
         flow_key,
         (src_host_id, dst_host_id, src_port, dst_port),
-        protocol,
+        &protocol,
         app_protocol,
+        vlan,
         i64::from(orig_len),
         timestamp,
     )?;
@@ -519,12 +880,113 @@ fn process_packet(
         &modbus_frames,
     )?;
 
+    insert_packet(conn, state, Some(conn_id), timestamp, orig_len)?;
+    match ip.src {
+        IpAddr::V4(_) => state.decoded.ipv4 += 1,
+        IpAddr::V6(_) => state.decoded.ipv6 += 1,
+    }
+
+    if let Transport::Udp {
+        src_port,
+        dst_port,
+        payload,
+    } = ip.transport
+    {
+        match identity::inspect_udp(src_port, dst_port, payload) {
+            Some(UdpFacts::Sender { source, facts }) => {
+                state
+                    .evidence
+                    .record_all(src_host_id, source, facts, timestamp);
+            }
+            Some(UdpFacts::Dhcp(dhcp)) => apply_dhcp(conn, state, dhcp, timestamp)?,
+            None => {}
+        }
+    }
+    Ok(())
+}
+
+/// DHCP facts belong to the client the exchange is about, not to the
+/// packet's sender. Until the exchange names the client's address they wait
+/// under its MAC.
+fn apply_dhcp(
+    conn: &rusqlite::Connection,
+    state: &mut IngestState,
+    dhcp: DhcpFacts,
+    timestamp: f64,
+) -> Result<(), CoreError> {
+    let Some(ip) = dhcp.client_ip else {
+        let pending = state.dhcp_pending.entry(dhcp.client_mac).or_default();
+        for fact in dhcp.facts {
+            pending.push((fact, timestamp));
+        }
+        return Ok(());
+    };
+    let id = upsert_host(
+        conn,
+        state,
+        IpAddr::V4(ip),
+        Some(&dhcp.client_mac),
+        MacSource::Dhcp,
+        0,
+        timestamp,
+    )?;
+    if let Some(pending) = state.dhcp_pending.remove(&dhcp.client_mac) {
+        for (fact, ts) in pending {
+            state.evidence.record(id, "dhcp", fact, ts);
+        }
+    }
+    state.evidence.record_all(id, "dhcp", dhcp.facts, timestamp);
+    Ok(())
+}
+
+/// Record a decoded frame. This is the only place `packet_count` and the
+/// capture's time range move, so the timeline and the counters agree.
+fn insert_packet(
+    conn: &rusqlite::Connection,
+    state: &mut IngestState,
+    connection_id: Option<i64>,
+    timestamp: f64,
+    orig_len: u32,
+) -> Result<(), CoreError> {
     conn.prepare_cached(
         "INSERT INTO packets (connection_id, timestamp, length) VALUES (?1, ?2, ?3)",
     )?
-    .execute(params![conn_id, timestamp, i64::from(orig_len)])?;
-
+    .execute(params![connection_id, timestamp, i64::from(orig_len)])?;
     state.packet_count += 1;
+    if timestamp < state.min_ts {
+        state.min_ts = timestamp;
+    }
+    if timestamp > state.max_ts {
+        state.max_ts = timestamp;
+    }
+    Ok(())
+}
+
+fn upsert_pair(
+    conn: &rusqlite::Connection,
+    state: &mut IngestState,
+    (src, dst): (IpAddr, IpAddr),
+    macs: Macs,
+    timestamp: f64,
+) -> Result<(), CoreError> {
+    upsert_host(
+        conn,
+        state,
+        src,
+        macs.src.as_ref(),
+        MacSource::Frame,
+        0,
+        timestamp,
+    )?;
+    upsert_host(
+        conn,
+        state,
+        dst,
+        macs.dst.as_ref(),
+        MacSource::Frame,
+        0,
+        timestamp,
+    )?;
     Ok(())
 }
 
@@ -536,6 +998,7 @@ fn upsert_connection(
     (src_host_id, dst_host_id, src_port, dst_port): (i64, i64, u16, u16),
     protocol: &str,
     app_protocol: Option<&'static str>,
+    vlan: Option<u16>,
     packet_len: i64,
     timestamp: f64,
 ) -> Result<i64, CoreError> {
@@ -558,9 +1021,9 @@ fn upsert_connection(
     // Counts start at zero: the flush adds this parse's aggregate on top.
     conn.prepare_cached(
         "INSERT INTO connections
-            (src_host_id, dst_host_id, src_port, dst_port, protocol, app_protocol,
+            (src_host_id, dst_host_id, src_port, dst_port, protocol, app_protocol, vlan_id,
              packet_count, byte_count, first_seen, last_seen)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, 0, ?7, ?7)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, 0, ?8, ?8)",
     )?
     .execute(params![
         src_host_id,
@@ -569,6 +1032,7 @@ fn upsert_connection(
         dst_port,
         protocol,
         app_protocol,
+        vlan.map(i64::from),
         timestamp,
     ])?;
     let id = conn.last_insert_rowid();
@@ -625,37 +1089,98 @@ fn insert_modbus_events(
 
 /// Return the host's id, inserting it on first sight. The MAC string, vendor
 /// lookup, and IP formatting only happen on that first sight — never in the
-/// per-packet hot path.
+/// per-packet hot path. `link` flags which link-layer protocol (if any) this
+/// sighting came from; `mac` and its source become `mac` evidence, from
+/// which the analysis stage picks the device's own address.
 fn upsert_host(
     conn: &rusqlite::Connection,
     state: &mut IngestState,
-    ip: u32,
-    mac_bytes: &[u8],
+    ip: IpAddr,
+    mac: Option<&[u8; 6]>,
+    source: MacSource,
+    link: u8,
     timestamp: f64,
 ) -> Result<i64, CoreError> {
-    if let Some(agg) = state.hosts.get_mut(&ip) {
-        agg.first_seen = agg.first_seen.min(timestamp);
-        agg.last_seen = agg.last_seen.max(timestamp);
+    let IngestState {
+        hosts,
+        evidence,
+        mac_index,
+        frame_mac_index,
+        ..
+    } = state;
+    let agg = if let Some(agg) = hosts.get_mut(&ip) {
+        agg.touch(timestamp, link);
+        agg
+    } else {
+        // `IpAddr::to_string` is the one and only address formatter — IPv6
+        // comes out in its canonical compressed form, so the same address
+        // always maps to the same row.
+        let ip_str = ip.to_string();
+        let mac_str = format_mac(mac);
+        let vendor = mac.and_then(|m| oui::lookup_vendor(m));
+        let id = queries::insert_host(conn, &mac_str, Some(&ip_str), vendor, timestamp)?;
+        hosts.entry(ip).or_insert(HostAgg::new(id, timestamp, link))
+    };
+    // A pseudo-host's MAC is a group address or a client's before it has an
+    // address; it must not become evidence or an attribution target.
+    if let Some(mac) = mac.filter(|_| !is_pseudo_host(ip)) {
+        let index = match source {
+            MacSource::Frame => {
+                if agg.last_frame_mac == Some(*mac) {
+                    return Ok(agg.id);
+                }
+                agg.last_frame_mac = Some(*mac);
+                frame_mac_index
+            }
+            _ => mac_index,
+        };
+        let ids = index.entry(*mac).or_default();
+        if !ids.contains(&agg.id) {
+            ids.push(agg.id);
+        }
+        evidence.record(
+            agg.id,
+            source.name(),
+            Fact::new(kind::MAC, format_mac(Some(mac)), source.confidence()),
+            timestamp,
+        );
+    }
+    Ok(agg.id)
+}
+
+/// A device known only by its MAC. Its `mac_address` is its identity, so no
+/// `mac` evidence is recorded for it.
+fn upsert_mac_host(
+    conn: &rusqlite::Connection,
+    state: &mut IngestState,
+    mac: [u8; 6],
+    link: u8,
+    timestamp: f64,
+) -> Result<i64, CoreError> {
+    if let Some(agg) = state.mac_hosts.get_mut(&mac) {
+        agg.touch(timestamp, link);
         return Ok(agg.id);
     }
-    let ip_str = Ipv4Addr::from(ip).to_string();
-    let mac = format_mac(mac_bytes);
-    let vendor = oui::lookup_vendor(mac_bytes);
-    let id = queries::insert_host(conn, &mac, &ip_str, vendor, timestamp)?;
-    state.hosts.insert(
-        ip,
-        HostAgg {
-            id,
-            first_seen: timestamp,
-            last_seen: timestamp,
-        },
-    );
+    let id = queries::insert_host(
+        conn,
+        &format_mac(Some(&mac)),
+        None,
+        oui::lookup_vendor(&mac),
+        timestamp,
+    )?;
+    state
+        .mac_hosts
+        .insert(mac, HostAgg::new(id, timestamp, link));
     Ok(id)
 }
 
-fn format_mac(bytes: &[u8]) -> String {
+/// Lowercase colon-separated MAC, or empty when the link type carries none.
+fn format_mac(mac: Option<&[u8; 6]>) -> String {
     use std::fmt::Write as _;
-    let mut out = String::with_capacity(bytes.len() * 3);
+    let Some(bytes) = mac else {
+        return String::new();
+    };
+    let mut out = String::with_capacity(17);
     for (i, b) in bytes.iter().enumerate() {
         if i > 0 {
             out.push(':');
@@ -663,4 +1188,28 @@ fn format_mac(bytes: &[u8]) -> String {
         let _ = write!(out, "{b:02x}");
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn link_flag_names_round_trip() {
+        assert_eq!(link_names(0), "");
+        assert_eq!(link_names(LINK_ARP), "arp");
+        assert_eq!(link_names(LINK_ARP | LINK_CDP), "arp,cdp");
+        assert_eq!(link_flags("arp,cdp"), LINK_ARP | LINK_CDP);
+        assert_eq!(link_flags(""), 0);
+    }
+
+    #[test]
+    fn mac_formatting_round_trips() {
+        assert_eq!(format_mac(None), "");
+        let mac = [0, 0x1b, 0x1b, 0xaa, 0xbb, 0xcc];
+        assert_eq!(format_mac(Some(&mac)), "00:1b:1b:aa:bb:cc");
+        assert_eq!(parse_mac("00:1b:1b:aa:bb:cc"), Some(mac));
+        assert_eq!(parse_mac(""), None);
+        assert_eq!(parse_mac("00:1b:1b:aa:bb:cc:dd"), None);
+    }
 }

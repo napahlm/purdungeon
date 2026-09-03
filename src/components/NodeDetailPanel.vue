@@ -3,7 +3,7 @@ import { ref, computed, watch } from 'vue'
 import { useTopologyStore } from '@/stores/topology'
 import { useTauri } from '@/composables/useTauri'
 import type { HostDetail, ModbusHostActivity, Role } from '@/types/network'
-import { ROLE_LABELS, ASSIGNABLE_ROLES, effectiveLevel } from '@/types/network'
+import { ROLE_LABELS, ASSIGNABLE_ROLES, effectiveLevel, hostLabel } from '@/types/network'
 import { levelColorFor } from '@/canvas/palette'
 import { formatBytes, formatTime } from '@/utils/format'
 import DetailPanel from './ui/DetailPanel.vue'
@@ -129,8 +129,8 @@ function close() {
           class="inline-block h-2.5 w-2.5 rounded-full"
           :style="{ backgroundColor: levelBadgeColor }"
         />
-        <h2 class="font-mono text-sm font-semibold text-text-primary">
-          {{ host?.ip_address ?? 'Device' }}
+        <h2 class="truncate font-mono text-sm font-semibold text-text-primary">
+          {{ host ? hostLabel(host) : 'Device' }}
         </h2>
       </div>
     </template>
@@ -173,11 +173,17 @@ function close() {
 
       <PanelSection label="Identity">
         <div class="space-y-1.5 text-sm">
+          <DetailRow v-if="host.hostname" label="Name" mono>
+            {{ host.hostname }}
+          </DetailRow>
           <DetailRow label="MAC" mono>
             {{ host.mac_address || '—' }}
           </DetailRow>
           <DetailRow label="Vendor">
             {{ host.vendor ?? '—' }}
+          </DetailRow>
+          <DetailRow v-if="host.link_protocols" label="Link-layer">
+            seen in {{ host.link_protocols.toUpperCase().split(',').join(' · ') }}
           </DetailRow>
           <div v-if="host.protocols" class="flex items-start justify-between gap-3">
             <span class="text-text-secondary">Protocols</span>
@@ -185,6 +191,9 @@ function close() {
               {{ host.protocols.split(',').join(' · ') }}
             </span>
           </div>
+          <DetailRow v-if="detail.vlans.length" label="VLAN" mono>
+            {{ detail.vlans.join(', ') }}
+          </DetailRow>
           <DetailRow label="First seen">
             {{ formatTime(host.first_seen) }}
           </DetailRow>
@@ -195,6 +204,24 @@ function close() {
             {{ detail.total_packets.toLocaleString() }} packets ·
             {{ formatBytes(detail.total_bytes) }}
           </DetailRow>
+        </div>
+      </PanelSection>
+
+      <PanelSection v-if="detail.evidence.length" :label="`Evidence (${detail.evidence.length})`">
+        <div class="space-y-1">
+          <div v-for="e in detail.evidence" :key="e.id" class="flex items-baseline gap-2 text-xs">
+            <span class="w-24 shrink-0 text-text-secondary">{{ e.kind }}</span>
+            <span class="min-w-0 flex-1 truncate font-mono text-text-primary" :title="e.value">
+              {{ e.value }}
+            </span>
+            <span class="shrink-0 tabular-nums text-text-muted">
+              {{ e.source_protocol }} · {{ Math.round(e.confidence * 100) }}%<template
+                v-if="e.count > 1"
+              >
+                · ×{{ e.count }}</template
+              >
+            </span>
+          </div>
         </div>
       </PanelSection>
 

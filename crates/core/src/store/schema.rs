@@ -22,7 +22,8 @@ pub fn init_db() -> Result<(Connection, PathBuf), CoreError> {
         "CREATE TABLE IF NOT EXISTS hosts (
             id INTEGER PRIMARY KEY,
             mac_address TEXT NOT NULL,
-            ip_address TEXT NOT NULL UNIQUE,
+            -- NULL for a device known only by its MAC (LLDP/CDP/DHCP, no IP traffic)
+            ip_address TEXT UNIQUE,
             hostname TEXT,
             vendor TEXT,
             role TEXT NOT NULL DEFAULT 'unknown',
@@ -32,10 +33,14 @@ pub fn init_db() -> Result<(Connection, PathBuf), CoreError> {
             role_override TEXT,
             level_override INTEGER,
             protocols TEXT NOT NULL DEFAULT '',
+            link_protocols TEXT NOT NULL DEFAULT '',
             is_external INTEGER NOT NULL DEFAULT 0,
             first_seen REAL NOT NULL,
             last_seen REAL NOT NULL
         );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_hosts_mac_only
+            ON hosts(mac_address) WHERE ip_address IS NULL;
 
         CREATE TABLE IF NOT EXISTS connections (
             id INTEGER PRIMARY KEY,
@@ -45,6 +50,7 @@ pub fn init_db() -> Result<(Connection, PathBuf), CoreError> {
             dst_port INTEGER NOT NULL,
             protocol TEXT NOT NULL,
             app_protocol TEXT,
+            vlan_id INTEGER,
             packet_count INTEGER NOT NULL DEFAULT 1,
             byte_count INTEGER NOT NULL DEFAULT 0,
             first_seen REAL NOT NULL,
@@ -53,7 +59,8 @@ pub fn init_db() -> Result<(Connection, PathBuf), CoreError> {
 
         CREATE TABLE IF NOT EXISTS packets (
             id INTEGER PRIMARY KEY,
-            connection_id INTEGER NOT NULL,
+            -- NULL for link-layer-only frames (ARP, LLDP, CDP)
+            connection_id INTEGER,
             timestamp REAL NOT NULL,
             length INTEGER NOT NULL
         );
@@ -85,6 +92,21 @@ pub fn init_db() -> Result<(Connection, PathBuf), CoreError> {
             connection_ids TEXT NOT NULL DEFAULT ''
         );
 
+        -- One row per (device, kind, value, source) fact; see ingest/evidence.rs
+        CREATE TABLE IF NOT EXISTS evidence (
+            id INTEGER PRIMARY KEY,
+            host_id INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            value TEXT NOT NULL,
+            source_protocol TEXT NOT NULL,
+            first_seen REAL NOT NULL,
+            last_seen REAL NOT NULL,
+            confidence REAL NOT NULL,
+            count INTEGER NOT NULL DEFAULT 1,
+            UNIQUE(host_id, kind, value, source_protocol)
+        );
+        CREATE INDEX IF NOT EXISTS idx_evidence_host ON evidence(host_id);
+
         CREATE TABLE IF NOT EXISTS node_positions (
             host_id INTEGER PRIMARY KEY REFERENCES hosts(id),
             x REAL NOT NULL,
@@ -108,6 +130,7 @@ pub fn clear_data(conn: &Connection) -> Result<(), CoreError> {
          DELETE FROM hosts;
          DELETE FROM modbus_events;
          DELETE FROM findings;
+         DELETE FROM evidence;
          DELETE FROM node_positions;",
     )?;
     Ok(())

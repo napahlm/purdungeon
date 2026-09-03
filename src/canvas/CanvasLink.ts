@@ -2,7 +2,7 @@ import Konva from 'konva'
 import type { CanvasLink } from '@/types/canvas'
 import { UI, FONTS } from '@/ui/tokens'
 
-const BASE_OPACITY = 0.5
+const BASE_OPACITY = 0.7
 const CROSS_ZONE_OPACITY = 0.9
 
 function endpoints(link: CanvasLink): number[] {

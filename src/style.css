@@ -5,8 +5,14 @@
  *  - node color = Purdue level (warm at the process floor, cool at enterprise)
  *  - edge color = protocol family
  *  - amber/coral are reserved for findings and cross-zone traffic
+ *
+ * `static`: Tailwind v4 drops theme variables that no utility class uses,
+ * but the canvas reads every --color-* at runtime through initTokens(),
+ * so all of them must reach the stylesheet. Without this the level and
+ * protocol colours came back empty and Konva painted nodes and links
+ * fully transparent.
  */
-@theme {
+@theme static {
   /* Surfaces */
   --color-bg-primary: #0e1116;
   --color-bg-secondary: #141921;
@@ -41,7 +47,7 @@
   --color-proto-modbus: #4cc2ff;
   --color-proto-ot: #62c4ad;
   --color-proto-it: #8f9aa8;
-  --color-proto-other: #4a545f;
+  --color-proto-other: #5a6570;
 
   /* Canvas chrome */
   --color-band-fill: rgba(255, 255, 255, 0.022);

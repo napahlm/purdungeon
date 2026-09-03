@@ -1,7 +1,6 @@
 # Rust
 target/
 **/*.rs.bk
-Cargo.lock
 
 # Node
 node_modules/
@@ -31,3 +30,7 @@ Thumbs.db
 # Environment
 .env
 .env.*
+
+# Fetch-only test corpus (see crates/core/tests/corpus/manifest.toml)
+crates/core/tests/corpus/*.pcap
+crates/core/tests/corpus/*.pcapng

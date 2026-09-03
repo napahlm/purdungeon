@@ -1,0 +1,159 @@
+{
+  "fixture": "synthetic-mixed",
+  "frames_read": 25,
+  "packet_count": 21,
+  "decoded": {
+    "ipv4": 10,
+    "ipv6": 5,
+    "arp": 4,
+    "lldp": 1,
+    "cdp": 1
+  },
+  "skipped": {
+    "unsupported_link_type": 0,
+    "other_ethertype": 2,
+    "fragment": 1,
+    "truncated": 0,
+    "malformed": 0,
+    "no_timestamp": 1
+  },
+  "host_count": 16,
+  "connection_count": 11,
+  "time_range": [
+    1700000000.0,
+    1700000004.099999
+  ],
+  "hosts": [
+    {
+      "ip": "10.0.10.1",
+      "mac": "00:1b:1b:0a:00:01",
+      "vendor": "Siemens",
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "10.0.10.7",
+      "mac": "00:0c:29:aa:bb:cc",
+      "vendor": "VMware",
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "10.0.10.254",
+      "mac": "00:80:63:01:02:03",
+      "vendor": "Hirschmann",
+      "hostname": "SW1234",
+      "link_protocols": "arp,lldp,cdp"
+    },
+    {
+      "ip": "192.168.10.1",
+      "mac": "00:1b:1b:44:55:66",
+      "vendor": "Siemens",
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "192.168.10.2",
+      "mac": "00:1b:1b:44:55:66",
+      "vendor": "Siemens",
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "192.168.10.5",
+      "mac": "00:0c:29:aa:bb:cc",
+      "vendor": "VMware",
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "192.168.10.6",
+      "mac": "00:1b:1b:44:55:66",
+      "vendor": "Siemens",
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "192.168.10.100",
+      "mac": "00:0c:29:11:22:33",
+      "vendor": "VMware",
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "192.168.10.254",
+      "mac": "00:80:63:01:02:03",
+      "vendor": "Hirschmann",
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "224.0.0.18",
+      "mac": "01:00:5e:00:00:12",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "224.0.0.22",
+      "mac": "01:00:5e:00:00:16",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "fd00::10",
+      "mac": "00:0c:29:aa:bb:cc",
+      "vendor": "VMware",
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "fd00::20",
+      "mac": "00:1b:1b:44:55:66",
+      "vendor": "Siemens",
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "fe80::1",
+      "mac": "00:0c:29:aa:bb:cc",
+      "vendor": "VMware",
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "fe80::2",
+      "mac": "00:1b:1b:44:55:66",
+      "vendor": "Siemens",
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "ff02::fb",
+      "mac": "33:33:00:00:00:fb",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    }
+  ],
+  "transports": {
+    "ICMPv6": 2,
+    "IGMP": 1,
+    "TCP": 6,
+    "UDP": 1,
+    "VRRP": 1
+  },
+  "app_protocols": {
+    "modbus": 6,
+    "unnamed": 5
+  },
+  "vlans": [
+    20
+  ],
+  "evidence": {
+    "hostname": 1,
+    "mac": 13,
+    "port": 1
+  }
+}

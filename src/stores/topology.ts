@@ -1,7 +1,7 @@
 import { ref, computed, shallowRef } from 'vue'
 import { defineStore } from 'pinia'
 import type { Host, Connection, Finding } from '@/types/network'
-import { effectiveLevel, effectiveRole } from '@/types/network'
+import { effectiveLevel, effectiveRole, hostLabel } from '@/types/network'
 import type { CanvasNode, CanvasEdge, CanvasLink, BandLayout } from '@/types/canvas'
 import {
   BANDS,
@@ -13,7 +13,8 @@ import {
   type ProtoFamily,
 } from '@/canvas/palette'
 import { UI } from '@/ui/tokens'
-import { parseCidr, ipInCidr, TRANSPORT_TOKENS } from '@/utils/search'
+import { parseCidr, ipInCidr, compareAddresses, TRANSPORT_TOKENS } from '@/utils/search'
+import { shortAddress } from '@/utils/format'
 import { useTimelineStore } from './timeline'
 
 const BAND_HEIGHT = 220
@@ -32,12 +33,6 @@ function nodeShape(host: Host): CanvasNode['shape'] {
 function linkWidth(totalBytes: number): number {
   const base = Math.log2(totalBytes / 512 + 2)
   return Math.max(1.5, Math.min(base, 8))
-}
-
-function ipSortKey(ip: string): number {
-  const parts = ip.split('.').map(Number)
-  if (parts.length !== 4 || parts.some(Number.isNaN)) return Number.MAX_SAFE_INTEGER
-  return ((parts[0] * 256 + parts[1]) * 256 + parts[2]) * 256 + parts[3]
 }
 
 function pairKey(a: number, b: number): string {
@@ -128,7 +123,7 @@ function layoutBands(nodes: CanvasNode[], adjacency: Map<number, number[]>): Ban
   // Initial order: by IP, spaced around x = 0
   for (const layout of layouts) {
     const band = byBand.get(layout.key)!
-    band.sort((a, b) => ipSortKey(a.host.ip_address) - ipSortKey(b.host.ip_address))
+    band.sort((a, b) => compareAddresses(a.host.ip_address ?? '', b.host.ip_address ?? ''))
     respace(band, layout)
   }
 
@@ -327,7 +322,7 @@ export const useTopologyStore = defineStore('topology', () => {
    * Search understands more than substrings: a CIDR like `10.0.0.0/25` matches
    * hosts by subnet, a transport token (`tcp`/`udp`/`icmp`) or a protocol name
    * (`modbus`, `s7comm`, …) highlights that traffic and its endpoints, and
-   * anything else falls back to matching host IP/MAC/role/vendor/protocols.
+   * anything else falls back to matching host IP/name/MAC/role/vendor/protocols.
    */
   const searchMatch = computed<{ nodeIds: Set<number>; linkKeys: Set<string> }>(() => {
     const raw = searchQuery.value.trim()
@@ -344,10 +339,11 @@ export const useTopologyStore = defineStore('topology', () => {
       const h = node.host
       let hit = false
       if (cidr) {
-        hit = ipInCidr(h.ip_address, cidr)
+        hit = h.ip_address !== null && ipInCidr(h.ip_address, cidr)
       } else if (!transport) {
         hit =
-          h.ip_address.toLowerCase().includes(q) ||
+          (h.ip_address ?? '').toLowerCase().includes(q) ||
+          (h.hostname ?? '').toLowerCase().includes(q) ||
           h.mac_address.toLowerCase().includes(q) ||
           effectiveRole(h).toLowerCase().includes(q) ||
           (h.vendor ?? '').toLowerCase().includes(q) ||
@@ -362,7 +358,9 @@ export const useTopologyStore = defineStore('topology', () => {
         const hit = link.edges.some((e) =>
           transport
             ? e.connection.protocol.toUpperCase() === transport
-            : e.family === q || e.connection.app_protocol?.toLowerCase() === q,
+            : e.family === q ||
+              e.connection.app_protocol?.toLowerCase() === q ||
+              e.connection.protocol.toLowerCase() === q,
         )
         if (hit) {
           linkKeys.add(link.key)
@@ -407,7 +405,7 @@ export const useTopologyStore = defineStore('topology', () => {
         y: 0,
         bandKey,
         color: levelColor(host),
-        label: host.ip_address,
+        label: host.ip_address ? shortAddress(host.ip_address) : hostLabel(host),
         shape: nodeShape(host),
         dashed: host.is_external,
       }

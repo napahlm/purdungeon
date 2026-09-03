@@ -3,6 +3,7 @@
 //! the session database so the UI only ever queries.
 
 mod findings;
+mod identity;
 mod ports;
 mod roles;
 
@@ -16,6 +17,7 @@ pub fn run(
     on_stage: &(dyn Fn(ImportStage) + Send + Sync),
 ) -> Result<(), CoreError> {
     on_stage(ImportStage::IdentifyingDevices);
+    identity::resolve(conn)?;
     ports::classify_connections(conn)?;
     roles::collect_host_protocols(conn)?;
 
