@@ -6,6 +6,7 @@ mod common;
 
 use std::sync::atomic::AtomicU64;
 
+use common::identity::*;
 use common::*;
 use etherparse::IpNumber;
 use purdungeon_core::Session;
@@ -39,11 +40,11 @@ fn import_discovers_roles_and_modbus_activity() {
     let hosts = session.hosts().unwrap();
     let scada = hosts
         .iter()
-        .find(|h| h.ip_address == "192.168.10.100")
+        .find(|h| h.ip_address.as_deref() == Some("192.168.10.100"))
         .unwrap();
     let plc_a = hosts
         .iter()
-        .find(|h| h.ip_address == "192.168.10.1")
+        .find(|h| h.ip_address.as_deref() == Some("192.168.10.1"))
         .unwrap();
 
     // Polls 3 devices → scada at level 2; answers on 502 → plc at level 1
@@ -87,7 +88,7 @@ fn add_capture_merges_hosts_and_fuses_flows() {
         .hosts()
         .unwrap()
         .into_iter()
-        .find(|h| h.ip_address == "192.168.10.1")
+        .find(|h| h.ip_address.as_deref() == Some("192.168.10.1"))
         .unwrap()
         .id;
     session
@@ -100,11 +101,15 @@ fn add_capture_merges_hosts_and_fuses_flows() {
 
     let hosts = session.hosts().unwrap();
     assert!(
-        hosts.iter().any(|h| h.ip_address == "192.168.10.50"),
+        hosts
+            .iter()
+            .any(|h| h.ip_address.as_deref() == Some("192.168.10.50")),
         "new HMI host missing after append"
     );
     assert!(
-        hosts.iter().any(|h| h.ip_address == "192.168.10.4"),
+        hosts
+            .iter()
+            .any(|h| h.ip_address.as_deref() == Some("192.168.10.4")),
         "new PLC D host missing after append"
     );
     assert_eq!(
@@ -336,11 +341,11 @@ fn linux_cooked_captures_import_with_sender_macs_only() {
     let hosts = session.hosts().unwrap();
     let scada = hosts
         .iter()
-        .find(|h| h.ip_address == "192.168.10.100")
+        .find(|h| h.ip_address.as_deref() == Some("192.168.10.100"))
         .unwrap();
     let plc = hosts
         .iter()
-        .find(|h| h.ip_address == "192.168.10.1")
+        .find(|h| h.ip_address.as_deref() == Some("192.168.10.1"))
         .unwrap();
     assert_eq!(scada.mac_address, "00:0c:29:11:22:33");
     assert_eq!(
@@ -356,7 +361,7 @@ fn linux_cooked_captures_import_with_sender_macs_only() {
     let hosts = session.hosts().unwrap();
     let scada = hosts
         .iter()
-        .find(|h| h.ip_address == "192.168.10.100")
+        .find(|h| h.ip_address.as_deref() == Some("192.168.10.100"))
         .unwrap();
     assert_eq!(scada.mac_address, "00:1b:1b:44:55:66");
 }
@@ -434,7 +439,10 @@ fn vlan_tagged_arp_populates_a_subnet_without_ip_traffic() {
     assert_eq!(result.connection_count, 0);
 
     let hosts = session.hosts().unwrap();
-    let dev1 = hosts.iter().find(|h| h.ip_address == "10.0.10.1").unwrap();
+    let dev1 = hosts
+        .iter()
+        .find(|h| h.ip_address.as_deref() == Some("10.0.10.1"))
+        .unwrap();
     assert_eq!(dev1.mac_address, "00:1b:1b:0a:00:01");
     assert_eq!(dev1.vendor.as_deref(), Some("Siemens"));
     assert_eq!(dev1.link_protocols, "arp");
@@ -447,7 +455,10 @@ fn vlan_tagged_arp_populates_a_subnet_without_ip_traffic() {
         "evidence should say the device was only seen in ARP: {:?}",
         dev1.role_evidence
     );
-    let dev3 = hosts.iter().find(|h| h.ip_address == "10.0.10.3").unwrap();
+    let dev3 = hosts
+        .iter()
+        .find(|h| h.ip_address.as_deref() == Some("10.0.10.3"))
+        .unwrap();
     assert_eq!(dev3.role, "unknown");
     assert!(
         dev3.role_confidence.abs() < 1e-9,
@@ -457,7 +468,9 @@ fn vlan_tagged_arp_populates_a_subnet_without_ip_traffic() {
         dev3.role_evidence.as_deref(),
         Some("seen only in ARP; no IP traffic")
     );
-    assert!(hosts.iter().any(|h| h.ip_address == "10.0.10.254"));
+    assert!(hosts
+        .iter()
+        .any(|h| h.ip_address.as_deref() == Some("10.0.10.254")));
 }
 
 #[test]
@@ -501,7 +514,7 @@ fn arp_edge_cases_only_vouch_for_real_senders() {
         .hosts()
         .unwrap()
         .into_iter()
-        .map(|h| h.ip_address)
+        .filter_map(|h| h.ip_address)
         .collect();
     assert_eq!(ips.len(), 2, "hosts: {ips:?}");
     assert!(ips.contains(&"10.0.0.7".to_string()));
@@ -570,7 +583,7 @@ fn ipv6_flows_become_assets() {
     let by_ip = |ip: &str| {
         hosts
             .iter()
-            .find(|h| h.ip_address == ip)
+            .find(|h| h.ip_address.as_deref() == Some(ip))
             .unwrap_or_else(|| {
                 panic!(
                     "{ip} missing; addresses must be RFC 5952 compressed: {:?}",
@@ -662,7 +675,7 @@ fn ip_fragments_record_hosts_but_no_flow() {
 }
 
 #[test]
-fn lldp_and_cdp_are_counted_but_not_yet_assets() {
+fn lldp_and_cdp_senders_become_mac_only_assets() {
     let packets = vec![
         (BASE_TS, lldp_frame(SWITCH_MAC)),
         (BASE_TS + 30.0, cdp_frame(SWITCH_MAC)),
@@ -672,7 +685,21 @@ fn lldp_and_cdp_are_counted_but_not_yet_assets() {
     assert_eq!(result.decoded.lldp, 1);
     assert_eq!(result.decoded.cdp, 1);
     assert_eq!(result.packet_count, 2);
-    assert_eq!(result.host_count, 0);
+    assert_eq!(
+        result.host_count, 1,
+        "the announcing switch is one MAC-only asset"
+    );
+    let hosts = session.hosts().unwrap();
+    let switch = &hosts[0];
+    assert_eq!(switch.ip_address, None);
+    assert_eq!(switch.mac_address, "00:80:63:01:02:03");
+    assert_eq!(
+        switch.hostname.as_deref(),
+        Some("SW1234"),
+        "named by its CDP device id"
+    );
+    assert_eq!(switch.link_protocols, "lldp,cdp");
+    assert!(session.connections().unwrap().is_empty());
     assert!((result.time_range.1 - result.time_range.0 - 30.0).abs() < 1e-3);
     assert_eq!(session.time_range().unwrap(), result.time_range);
 }
@@ -818,7 +845,7 @@ fn append_with_ipv6_hosts_present_and_arp_for_a_known_host() {
     assert_eq!(session.connections().unwrap().len(), connections_before);
     let scada = hosts
         .iter()
-        .find(|h| h.ip_address == "192.168.10.100")
+        .find(|h| h.ip_address.as_deref() == Some("192.168.10.100"))
         .unwrap();
     assert_eq!(
         scada.link_protocols, "arp",
@@ -888,7 +915,7 @@ fn vlan_ids_are_recorded_on_conversations() {
         .hosts()
         .unwrap()
         .iter()
-        .find(|h| h.ip_address == "192.168.10.100")
+        .find(|h| h.ip_address.as_deref() == Some("192.168.10.100"))
         .unwrap()
         .id;
     let detail = session.host_detail(scada_id).unwrap();
@@ -911,5 +938,249 @@ fn identical_imports_produce_identical_findings() {
         signature(&session_a),
         signature(&session_b),
         "the same capture must always produce the same findings, in the same order"
+    );
+}
+
+// ── Identity evidence (PR 2) ────────────────────────────────────────────────
+
+fn evidence_of<'a>(
+    evidence: &'a [purdungeon_core::types::Evidence],
+    kind: &str,
+) -> Vec<&'a purdungeon_core::types::Evidence> {
+    evidence.iter().filter(|e| e.kind == kind).collect()
+}
+
+// One scenario, many devices: the assertions read best in one place.
+#[allow(clippy::too_many_lines)]
+#[test]
+fn identity_protocols_fill_the_evidence_table() {
+    let (session, result) = import_bytes("identity", &write_pcap(&identity_capture())).unwrap();
+    assert_reconciles(&result);
+    let hosts = session.hosts().unwrap();
+    let by_ip = |ip: &str| {
+        hosts
+            .iter()
+            .find(|h| h.ip_address.as_deref() == Some(ip))
+            .unwrap_or_else(|| panic!("{ip} missing from {hosts:?}"))
+    };
+
+    // The workstation: named by DHCP, NetBIOS and LLMNR; OS guessed from DHCP.
+    let ws = by_ip("192.168.10.77");
+    assert_eq!(ws.hostname.as_deref(), Some("ENG-WS01"));
+    assert_eq!(ws.mac_address, "00:50:56:01:02:03");
+    assert_eq!(ws.role, "workstation", "evidence: {:?}", ws.role_evidence);
+    assert_eq!(ws.role_evidence.as_deref(), Some("Windows host (DHCP)"));
+    let detail = session.host_detail(ws.id).unwrap();
+    let names = evidence_of(&detail.evidence, "hostname");
+    let sources: Vec<&str> = names.iter().map(|e| e.source_protocol.as_str()).collect();
+    assert!(
+        sources.contains(&"dhcp") && sources.contains(&"nbns") && sources.contains(&"llmnr"),
+        "{sources:?}"
+    );
+    assert!(names.iter().all(|e| e.value == "ENG-WS01"));
+    let os = evidence_of(&detail.evidence, "os");
+    assert_eq!(os.len(), 1);
+    assert_eq!(os[0].value, "Windows");
+    assert!((os[0].confidence - 0.7).abs() < 1e-9);
+    assert_eq!(
+        evidence_of(&detail.evidence, "vendor-class")[0].value,
+        "MSFT 5.0"
+    );
+    assert_eq!(
+        evidence_of(&detail.evidence, "domain")
+            .iter()
+            .map(|e| e.value.as_str())
+            .collect::<Vec<_>>(),
+        ["PLANT", "plant.local"]
+    );
+    let macs = evidence_of(&detail.evidence, "mac");
+    let mac_sources: Vec<&str> = macs.iter().map(|e| e.source_protocol.as_str()).collect();
+    assert!(
+        mac_sources.contains(&"arp")
+            && mac_sources.contains(&"dhcp")
+            && mac_sources.contains(&"ethernet"),
+        "{mac_sources:?}"
+    );
+    assert!(
+        detail.evidence.windows(2).all(|w| w[0].kind <= w[1].kind),
+        "evidence must be sorted by kind"
+    );
+
+    // The printer over mDNS
+    let printer = by_ip("192.168.10.90");
+    assert_eq!(printer.hostname.as_deref(), Some("printer"));
+    let detail = session.host_detail(printer.id).unwrap();
+    assert_eq!(
+        evidence_of(&detail.evidence, "service")[0].value,
+        "_ipp._tcp"
+    );
+    assert_eq!(
+        evidence_of(&detail.evidence, "model")[0].value,
+        "Deskjet 2700"
+    );
+
+    // The core switch: SNMP and LLDP agree, and the description settles the role.
+    let core = by_ip("192.168.10.2");
+    assert_eq!(core.hostname.as_deref(), Some("SW-CORE"));
+    assert_eq!(
+        core.role, "network-gear",
+        "evidence: {:?}",
+        core.role_evidence
+    );
+    assert!(
+        core.role_evidence
+            .as_deref()
+            .unwrap()
+            .starts_with("describes itself as \"Cisco IOS"),
+        "{:?}",
+        core.role_evidence
+    );
+    assert_eq!(core.link_protocols, "lldp");
+    let detail = session.host_detail(core.id).unwrap();
+    assert_eq!(
+        evidence_of(&detail.evidence, "vendor")[0].value,
+        "Cisco Systems"
+    );
+    assert_eq!(
+        evidence_of(&detail.evidence, "port")[0].value,
+        "Gi1/0/5 (uplink)"
+    );
+    assert_eq!(
+        evidence_of(&detail.evidence, "capabilities")[0].value,
+        "bridge"
+    );
+    assert_eq!(
+        evidence_of(&detail.evidence, "management-address")[0].value,
+        "192.168.10.2"
+    );
+    assert_eq!(
+        evidence_of(&detail.evidence, "sysobjectid")[0].value,
+        "1.3.6.1.4.1.9.1.716"
+    );
+
+    // The controller keeps its role from traffic; its LLDP is evidence, not a verdict.
+    let plc = by_ip("192.168.10.1");
+    assert_eq!(plc.role, "plc");
+    assert_eq!(plc.hostname.as_deref(), Some("plc-line1"));
+    let detail = session.host_detail(plc.id).unwrap();
+    assert_eq!(
+        evidence_of(&detail.evidence, "capabilities")[0].value,
+        "bridge, station-only"
+    );
+}
+
+#[test]
+fn a_switch_heard_only_over_cdp_becomes_a_mac_only_asset() {
+    let (session, result) = import_bytes("identity-cdp", &write_pcap(&identity_capture())).unwrap();
+    assert_reconciles(&result);
+    let hosts = session.hosts().unwrap();
+    let silent = hosts
+        .iter()
+        .find(|h| h.mac_address == "00:1e:14:aa:bb:cc")
+        .expect("the CDP-only switch must exist as an asset");
+    assert_eq!(silent.ip_address, None);
+    assert_eq!(silent.hostname.as_deref(), Some("SW-ACCESS-2"));
+    assert_eq!(
+        silent.role, "network-gear",
+        "evidence: {:?}",
+        silent.role_evidence
+    );
+    assert_eq!(silent.link_protocols, "cdp");
+    let detail = session.host_detail(silent.id).unwrap();
+    assert_eq!(
+        evidence_of(&detail.evidence, "model")[0].value,
+        "cisco WS-C2960-24TT-L"
+    );
+    assert_eq!(
+        evidence_of(&detail.evidence, "capabilities")[0].value,
+        "switch, igmp"
+    );
+    assert_eq!(
+        evidence_of(&detail.evidence, "port")[0].value,
+        "GigabitEthernet1/0/12"
+    );
+    assert!(detail.connections.is_empty());
+    // A MAC-only asset is neither external nor broadcast, and stays on the map.
+    assert!(!silent.is_external);
+    assert_eq!(result.host_count, hosts.len());
+}
+
+#[test]
+fn arp_corrects_a_mac_learned_from_a_routed_frame() {
+    let (session, _) = import_bytes("identity-mac", &write_pcap(&identity_capture())).unwrap();
+    let hosts = session.hosts().unwrap();
+    let moved = hosts
+        .iter()
+        .find(|h| h.ip_address.as_deref() == Some("192.168.10.60"))
+        .unwrap();
+    assert_eq!(
+        moved.mac_address, "00:0c:29:60:60:60",
+        "ARP outranks the frame MAC"
+    );
+    let detail = session.host_detail(moved.id).unwrap();
+    let macs = evidence_of(&detail.evidence, "mac");
+    assert!(macs
+        .iter()
+        .any(|e| e.source_protocol == "ethernet" && e.value == "00:1e:14:00:00:01"));
+    assert!(macs
+        .iter()
+        .any(|e| e.source_protocol == "arp" && e.value == "00:0c:29:60:60:60"));
+}
+
+#[test]
+fn dhcp_discover_without_an_ack_still_names_the_client() {
+    let packets = vec![(BASE_TS, dhcp_discover_frame(WS_MAC, "LAPTOP-7"))];
+    let (session, result) = import_bytes("dhcp-only", &write_pcap(&packets)).unwrap();
+    assert_reconciles(&result);
+    let hosts = session.hosts().unwrap();
+    // 0.0.0.0 and 255.255.255.255 are pseudo-hosts hidden as broadcast; the
+    // client itself is a MAC-only asset carrying the name.
+    let client = hosts
+        .iter()
+        .find(|h| h.mac_address == "00:50:56:01:02:03" && h.ip_address.is_none())
+        .expect("MAC-only client");
+    assert_eq!(client.hostname.as_deref(), Some("LAPTOP-7"));
+    assert_eq!(
+        hosts
+            .iter()
+            .find(|h| h.ip_address.as_deref() == Some("0.0.0.0"))
+            .unwrap()
+            .role,
+        "broadcast"
+    );
+}
+
+#[test]
+fn identity_evidence_survives_an_append() {
+    let (session, _) = import_bytes("identity-append-a", &write_pcap(&identity_capture())).unwrap();
+    let again = append_bytes(
+        &session,
+        "identity-append-b",
+        &write_pcap(&identity_capture()),
+    )
+    .unwrap();
+    assert_reconciles(&again);
+    let hosts = session.hosts().unwrap();
+    let ws = hosts
+        .iter()
+        .find(|h| h.ip_address.as_deref() == Some("192.168.10.77"))
+        .unwrap();
+    let detail = session.host_detail(ws.id).unwrap();
+    let dhcp_names = evidence_of(&detail.evidence, "hostname");
+    let nbns = dhcp_names
+        .iter()
+        .find(|e| e.source_protocol == "nbns")
+        .unwrap();
+    assert_eq!(
+        nbns.count, 2,
+        "the same fact seen in both files merges into one row"
+    );
+    assert_eq!(
+        hosts
+            .iter()
+            .filter(|h| h.mac_address == "00:1e:14:aa:bb:cc")
+            .count(),
+        1,
+        "MAC-only assets must not duplicate on append"
     );
 }

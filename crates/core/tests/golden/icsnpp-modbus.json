@@ -28,18 +28,21 @@
       "ip": "3.15.227.20",
       "mac": "50:6a:03:ae:49:7d",
       "vendor": null,
+      "hostname": null,
       "link_protocols": ""
     },
     {
       "ip": "127.0.0.1",
       "mac": "00:00:00:00:00:00",
       "vendor": null,
+      "hostname": null,
       "link_protocols": ""
     },
     {
       "ip": "192.168.1.6",
       "mac": "04:0e:3c:1f:4b:c1",
       "vendor": null,
+      "hostname": null,
       "link_protocols": ""
     }
   ],
@@ -49,5 +52,8 @@
   "app_protocols": {
     "modbus": 4
   },
-  "vlans": []
+  "vlans": [],
+  "evidence": {
+    "mac": 3
+  }
 }

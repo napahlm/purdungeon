@@ -1,8 +1,8 @@
 //! Capture ingest: stream a pcap/pcapng file, decode every frame, and fold
-//! hosts, flows and packets into the session database. Nothing is dropped
-//! silently — every record ends up in `ImportResult` either as decoded or as
-//! a counted reason for skipping, and the two always add up to the frames
-//! read.
+//! hosts, flows, packets and identity evidence into the session database.
+//! Nothing is dropped silently — every record ends up in `ImportResult`
+//! either as decoded or as a counted reason for skipping, and the two always
+//! add up to the frames read.
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -15,7 +15,9 @@ use pcap_parser::traits::PcapReaderIterator;
 use pcap_parser::*;
 use rusqlite::params;
 
+use crate::ingest::evidence::{kind, EvidenceSink, Fact};
 use crate::ingest::frame::{self, Frame, IpFrame, Transport};
+use crate::ingest::identity::{self, DhcpFacts, L2Facts, UdpFacts};
 use crate::ingest::link::{self, LinkDecode, Macs};
 use crate::oui;
 use crate::protocols::{arp, ip_proto, modbus};
@@ -77,6 +79,49 @@ pub fn append_pcap(
 /// protocol number). Port-less protocols use 0/0.
 type FlowKey = (IpAddr, IpAddr, u16, u16, u8);
 
+/// Facts waiting for the host they belong to, each with when it was seen.
+type PendingFacts = Vec<(Fact, f64)>;
+type PendingAnnouncements = Vec<(L2Facts, f64)>;
+
+/// Broadcast, multicast and unspecified addresses are not devices; their
+/// MACs are group addresses or a client's before it has an address.
+fn is_pseudo_host(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => v4.is_unspecified() || v4.is_multicast() || v4.is_broadcast(),
+        IpAddr::V6(v6) => v6.is_unspecified() || v6.is_multicast(),
+    }
+}
+
+/// Where a MAC address for a host was learned, and how much that is worth.
+/// A frame's source MAC is the last hop's — a router's for anything beyond
+/// the local segment — whereas ARP, DHCP and LLDP/CDP name the device's own.
+#[derive(Clone, Copy)]
+enum MacSource {
+    Frame,
+    Arp,
+    Dhcp,
+    Announcement(&'static str),
+}
+
+impl MacSource {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Frame => "ethernet",
+            Self::Arp => "arp",
+            Self::Dhcp => "dhcp",
+            Self::Announcement(source) => source,
+        }
+    }
+
+    fn confidence(self) -> f64 {
+        match self {
+            Self::Frame => 0.5,
+            Self::Arp => 0.95,
+            Self::Dhcp | Self::Announcement(_) => 0.9,
+        }
+    }
+}
+
 /// Per-host aggregate accumulated in memory during a parse and flushed to the
 /// DB once at the end, instead of issuing an UPDATE per packet.
 struct HostAgg {
@@ -87,6 +132,28 @@ struct HostAgg {
     link_seen: u8,
     /// What the stored row already lists, so the flush only writes changes.
     link_stored: u8,
+    /// The last MAC a frame carried for this host, so the hot path only
+    /// records evidence when it changes.
+    last_frame_mac: Option<[u8; 6]>,
+}
+
+impl HostAgg {
+    fn new(id: i64, timestamp: f64, link: u8) -> Self {
+        Self {
+            id,
+            first_seen: timestamp,
+            last_seen: timestamp,
+            link_seen: link,
+            link_stored: 0,
+            last_frame_mac: None,
+        }
+    }
+
+    fn touch(&mut self, timestamp: f64, link: u8) {
+        self.first_seen = self.first_seen.min(timestamp);
+        self.last_seen = self.last_seen.max(timestamp);
+        self.link_seen |= link;
+    }
 }
 
 /// Per-flow aggregate, same idea. `packets`/`bytes` count only this parse —
@@ -104,7 +171,20 @@ struct FlowAgg {
 #[derive(Default)]
 struct IngestState {
     hosts: HashMap<IpAddr, HostAgg>,
+    /// Devices known only by MAC: seen in LLDP, CDP or DHCP but never in IP
+    /// traffic the capture point could see.
+    mac_hosts: HashMap<[u8; 6], HostAgg>,
+    /// MAC → hosts that ARP, DHCP or an announcement say own it.
+    mac_index: HashMap<[u8; 6], Vec<i64>>,
+    /// MAC → hosts whose frames carried it (possibly a router's MAC).
+    frame_mac_index: HashMap<[u8; 6], Vec<i64>>,
     flows: HashMap<FlowKey, FlowAgg>,
+    evidence: EvidenceSink,
+    /// DHCP client facts waiting for the exchange to name the client.
+    dhcp_pending: HashMap<[u8; 6], PendingFacts>,
+    /// LLDP/CDP announcements by sender MAC, attributed once every host is
+    /// known so a device is not split into a MAC-only asset and an IP one.
+    l2_pending: HashMap<[u8; 6], PendingAnnouncements>,
     /// Every record read from the file, whatever became of it.
     frames_read: usize,
     /// Frames that became rows in `packets`.
@@ -196,7 +276,9 @@ fn ingest(
         }
     }
 
+    resolve_pending(&tx, &mut state)?;
     flush_aggregates(&tx, &state)?;
+    state.evidence.flush(&tx)?;
 
     // Recreate indexes after all data is inserted
     schema::create_packet_indexes(&tx)?;
@@ -212,7 +294,7 @@ fn ingest(
         packet_count: state.packet_count,
         decoded: state.decoded,
         skipped: state.skipped,
-        host_count: state.hosts.len(),
+        host_count: state.hosts.len() + state.mac_hosts.len(),
         connection_count: state.flows.len(),
         time_range: (state.min_ts, state.max_ts),
     })
@@ -227,30 +309,46 @@ fn parse_stored_ip(text: &str) -> Result<IpAddr, CoreError> {
     })
 }
 
+fn parse_mac(text: &str) -> Option<[u8; 6]> {
+    let mut out = [0u8; 6];
+    let mut parts = text.split(':');
+    for slot in &mut out {
+        *slot = u8::from_str_radix(parts.next()?, 16).ok()?;
+    }
+    parts.next().is_none().then_some(out)
+}
+
 /// Rebuild the host and flow caches from the session so an append reuses
 /// existing ids. Aggregates start empty — the flush only adds what this
 /// parse contributes on top of the stored rows.
 fn preload_caches(conn: &rusqlite::Connection, state: &mut IngestState) -> Result<(), CoreError> {
-    let mut stmt = conn.prepare("SELECT ip_address, id, link_protocols FROM hosts")?;
+    let mut stmt = conn.prepare("SELECT id, ip_address, mac_address, link_protocols FROM hosts")?;
     let rows = stmt.query_map([], |row| {
         Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, i64>(1)?,
+            row.get::<_, i64>(0)?,
+            row.get::<_, Option<String>>(1)?,
             row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
         ))
     })?;
     for row in rows {
-        let (ip, id, links) = row?;
-        state.hosts.insert(
-            parse_stored_ip(&ip)?,
-            HostAgg {
-                id,
-                first_seen: f64::MAX,
-                last_seen: f64::MIN,
-                link_seen: 0,
-                link_stored: link_flags(&links),
-            },
-        );
+        let (id, ip, mac, links) = row?;
+        let mut agg = HostAgg::new(id, f64::MAX, 0);
+        agg.last_seen = f64::MIN;
+        agg.link_stored = link_flags(&links);
+        if let Some(ip) = ip {
+            let ip = parse_stored_ip(&ip)?;
+            if let Some(mac) = parse_mac(&mac).filter(|_| !is_pseudo_host(ip)) {
+                agg.last_frame_mac = Some(mac);
+                state.frame_mac_index.entry(mac).or_default().push(id);
+            }
+            state.hosts.insert(ip, agg);
+        } else {
+            let mac = parse_mac(&mac).ok_or_else(|| {
+                CoreError::Internal(format!("stored MAC-only host {mac:?} has no valid MAC"))
+            })?;
+            state.mac_hosts.insert(mac, agg);
+        }
     }
 
     let mut stmt = conn.prepare(
@@ -312,7 +410,7 @@ fn flush_aggregates(conn: &rusqlite::Connection, state: &IngestState) -> Result<
     )?;
     let mut link_stmt =
         conn.prepare_cached("UPDATE hosts SET link_protocols = ?1 WHERE id = ?2")?;
-    for agg in state.hosts.values() {
+    for agg in state.hosts.values().chain(state.mac_hosts.values()) {
         if agg.first_seen <= agg.last_seen {
             host_stmt.execute(params![agg.first_seen, agg.last_seen, agg.id])?;
         }
@@ -347,6 +445,75 @@ fn flush_aggregates(conn: &rusqlite::Connection, state: &IngestState) -> Result<
         }
     }
     Ok(())
+}
+
+/// Attribute the facts that could not be placed while parsing: DHCP client
+/// facts whose exchange never named an address, and LLDP/CDP announcements,
+/// which are keyed by MAC. Done last so every IP host is already known and a
+/// device is not split into a MAC-only asset and an IP one.
+fn resolve_pending(conn: &rusqlite::Connection, state: &mut IngestState) -> Result<(), CoreError> {
+    let mut dhcp: Vec<([u8; 6], PendingFacts)> = state.dhcp_pending.drain().collect();
+    dhcp.sort_by_key(|(mac, _)| *mac);
+    for (mac, facts) in dhcp {
+        let first_ts = facts.iter().map(|(_, ts)| *ts).fold(f64::MAX, f64::min);
+        let id = host_for_mac(conn, state, mac, 0, first_ts)?;
+        for (fact, ts) in facts {
+            state.evidence.record(id, "dhcp", fact, ts);
+        }
+    }
+
+    let mut announcements: Vec<([u8; 6], PendingAnnouncements)> =
+        state.l2_pending.drain().collect();
+    announcements.sort_by_key(|(mac, _)| *mac);
+    for (mac, items) in announcements {
+        for (l2, ts) in items {
+            let link = if l2.source == "lldp" {
+                LINK_LLDP
+            } else {
+                LINK_CDP
+            };
+            let id = match l2.management.first() {
+                Some(address) => upsert_host(
+                    conn,
+                    state,
+                    *address,
+                    Some(&mac),
+                    MacSource::Announcement(l2.source),
+                    link,
+                    ts,
+                )?,
+                None => host_for_mac(conn, state, mac, link, ts)?,
+            };
+            state.evidence.record_all(id, l2.source, l2.facts, ts);
+        }
+    }
+    Ok(())
+}
+
+/// The host a MAC belongs to: the one ARP/DHCP/announcements say owns it,
+/// else the only host whose frames carried it, else a new MAC-only asset.
+fn host_for_mac(
+    conn: &rusqlite::Connection,
+    state: &mut IngestState,
+    mac: [u8; 6],
+    link: u8,
+    timestamp: f64,
+) -> Result<i64, CoreError> {
+    let known = state
+        .mac_index
+        .get(&mac)
+        .or_else(|| state.frame_mac_index.get(&mac))
+        .and_then(|ids| match ids.as_slice() {
+            [only] => Some(*only),
+            _ => None,
+        });
+    if let Some(id) = known {
+        if let Some(agg) = state.hosts.values_mut().find(|agg| agg.id == id) {
+            agg.touch(timestamp, link);
+        }
+        return Ok(id);
+    }
+    upsert_mac_host(conn, state, mac, link, timestamp)
 }
 
 /// Per-interface decoding parameters from an Interface Description Block.
@@ -544,21 +711,29 @@ fn process_frame(
             Ok(())
         }
         Frame::Arp(info) => {
-            if let Some(info) = info {
-                for (ip, mac) in arp::hosts_from(&info) {
-                    upsert_host(conn, state, IpAddr::V4(ip), Some(&mac), LINK_ARP, timestamp)?;
-                }
-            }
+            ingest_arp(conn, state, info, timestamp)?;
             insert_packet(conn, state, None, timestamp, orig_len)?;
             state.decoded.arp += 1;
             Ok(())
         }
-        Frame::Lldp => {
+        Frame::Lldp(info) => {
+            queue_announcement(
+                state,
+                classified.macs.src,
+                identity::lldp_facts(&info),
+                timestamp,
+            );
             insert_packet(conn, state, None, timestamp, orig_len)?;
             state.decoded.lldp += 1;
             Ok(())
         }
-        Frame::Cdp => {
+        Frame::Cdp(info) => {
+            queue_announcement(
+                state,
+                classified.macs.src,
+                identity::cdp_facts(&info),
+                timestamp,
+            );
             insert_packet(conn, state, None, timestamp, orig_len)?;
             state.decoded.cdp += 1;
             Ok(())
@@ -584,7 +759,49 @@ fn process_frame(
     }
 }
 
-/// An IP packet: both hosts, its flow, any Modbus frames, and a packet row.
+/// The hosts an ARP packet vouches for, with the MAC it names for each.
+fn ingest_arp(
+    conn: &rusqlite::Connection,
+    state: &mut IngestState,
+    info: Option<arp::ArpInfo>,
+    timestamp: f64,
+) -> Result<(), CoreError> {
+    let Some(info) = info else {
+        return Ok(());
+    };
+    for (ip, mac) in arp::hosts_from(&info) {
+        upsert_host(
+            conn,
+            state,
+            IpAddr::V4(ip),
+            Some(&mac),
+            MacSource::Arp,
+            LINK_ARP,
+            timestamp,
+        )?;
+    }
+    Ok(())
+}
+
+/// Park an LLDP/CDP announcement under its sender MAC until the end of the
+/// parse, when every host is known and it can be attributed.
+fn queue_announcement(
+    state: &mut IngestState,
+    sender: Option<[u8; 6]>,
+    facts: L2Facts,
+    timestamp: f64,
+) {
+    if let Some(mac) = sender {
+        state
+            .l2_pending
+            .entry(mac)
+            .or_default()
+            .push((facts, timestamp));
+    }
+}
+
+/// An IP packet: both hosts, its flow, any Modbus frames, a packet row, and
+/// whatever identity its UDP payload gives away.
 fn ingest_ip(
     conn: &rusqlite::Connection,
     state: &mut IngestState,
@@ -600,7 +817,9 @@ fn ingest_ip(
             dst_port,
             payload,
         } => (src_port, dst_port, Some(payload)),
-        Transport::Udp { src_port, dst_port } => (src_port, dst_port, None),
+        Transport::Udp {
+            src_port, dst_port, ..
+        } => (src_port, dst_port, None),
         Transport::Portless => (0, 0, None),
     };
 
@@ -618,8 +837,24 @@ fn ingest_ip(
     };
 
     // Hosts and flows accumulate in memory; only first sight touches the DB.
-    let src_host_id = upsert_host(conn, state, ip.src, macs.src.as_ref(), 0, timestamp)?;
-    let dst_host_id = upsert_host(conn, state, ip.dst, macs.dst.as_ref(), 0, timestamp)?;
+    let src_host_id = upsert_host(
+        conn,
+        state,
+        ip.src,
+        macs.src.as_ref(),
+        MacSource::Frame,
+        0,
+        timestamp,
+    )?;
+    let dst_host_id = upsert_host(
+        conn,
+        state,
+        ip.dst,
+        macs.dst.as_ref(),
+        MacSource::Frame,
+        0,
+        timestamp,
+    )?;
 
     let protocol = ip_proto::name(ip.ip_proto);
     let flow_key = (ip.src, ip.dst, src_port, dst_port, ip.ip_proto);
@@ -650,6 +885,57 @@ fn ingest_ip(
         IpAddr::V4(_) => state.decoded.ipv4 += 1,
         IpAddr::V6(_) => state.decoded.ipv6 += 1,
     }
+
+    if let Transport::Udp {
+        src_port,
+        dst_port,
+        payload,
+    } = ip.transport
+    {
+        match identity::inspect_udp(src_port, dst_port, payload) {
+            Some(UdpFacts::Sender { source, facts }) => {
+                state
+                    .evidence
+                    .record_all(src_host_id, source, facts, timestamp);
+            }
+            Some(UdpFacts::Dhcp(dhcp)) => apply_dhcp(conn, state, dhcp, timestamp)?,
+            None => {}
+        }
+    }
+    Ok(())
+}
+
+/// DHCP facts belong to the client the exchange is about, not to the
+/// packet's sender. Until the exchange names the client's address they wait
+/// under its MAC.
+fn apply_dhcp(
+    conn: &rusqlite::Connection,
+    state: &mut IngestState,
+    dhcp: DhcpFacts,
+    timestamp: f64,
+) -> Result<(), CoreError> {
+    let Some(ip) = dhcp.client_ip else {
+        let pending = state.dhcp_pending.entry(dhcp.client_mac).or_default();
+        for fact in dhcp.facts {
+            pending.push((fact, timestamp));
+        }
+        return Ok(());
+    };
+    let id = upsert_host(
+        conn,
+        state,
+        IpAddr::V4(ip),
+        Some(&dhcp.client_mac),
+        MacSource::Dhcp,
+        0,
+        timestamp,
+    )?;
+    if let Some(pending) = state.dhcp_pending.remove(&dhcp.client_mac) {
+        for (fact, ts) in pending {
+            state.evidence.record(id, "dhcp", fact, ts);
+        }
+    }
+    state.evidence.record_all(id, "dhcp", dhcp.facts, timestamp);
     Ok(())
 }
 
@@ -683,8 +969,24 @@ fn upsert_pair(
     macs: Macs,
     timestamp: f64,
 ) -> Result<(), CoreError> {
-    upsert_host(conn, state, src, macs.src.as_ref(), 0, timestamp)?;
-    upsert_host(conn, state, dst, macs.dst.as_ref(), 0, timestamp)?;
+    upsert_host(
+        conn,
+        state,
+        src,
+        macs.src.as_ref(),
+        MacSource::Frame,
+        0,
+        timestamp,
+    )?;
+    upsert_host(
+        conn,
+        state,
+        dst,
+        macs.dst.as_ref(),
+        MacSource::Frame,
+        0,
+        timestamp,
+    )?;
     Ok(())
 }
 
@@ -788,42 +1090,87 @@ fn insert_modbus_events(
 /// Return the host's id, inserting it on first sight. The MAC string, vendor
 /// lookup, and IP formatting only happen on that first sight — never in the
 /// per-packet hot path. `link` flags which link-layer protocol (if any) this
-/// sighting came from.
-///
-/// The MAC stored is whatever the first frame carried. For a host beyond a
-/// router that is the router's MAC, whereas an ARP sender address is the
-/// device's own; the evidence table in a later release lets ARP override.
+/// sighting came from; `mac` and its source become `mac` evidence, from
+/// which the analysis stage picks the device's own address.
 fn upsert_host(
     conn: &rusqlite::Connection,
     state: &mut IngestState,
     ip: IpAddr,
     mac: Option<&[u8; 6]>,
+    source: MacSource,
     link: u8,
     timestamp: f64,
 ) -> Result<i64, CoreError> {
-    if let Some(agg) = state.hosts.get_mut(&ip) {
-        agg.first_seen = agg.first_seen.min(timestamp);
-        agg.last_seen = agg.last_seen.max(timestamp);
-        agg.link_seen |= link;
+    let IngestState {
+        hosts,
+        evidence,
+        mac_index,
+        frame_mac_index,
+        ..
+    } = state;
+    let agg = if let Some(agg) = hosts.get_mut(&ip) {
+        agg.touch(timestamp, link);
+        agg
+    } else {
+        // `IpAddr::to_string` is the one and only address formatter — IPv6
+        // comes out in its canonical compressed form, so the same address
+        // always maps to the same row.
+        let ip_str = ip.to_string();
+        let mac_str = format_mac(mac);
+        let vendor = mac.and_then(|m| oui::lookup_vendor(m));
+        let id = queries::insert_host(conn, &mac_str, Some(&ip_str), vendor, timestamp)?;
+        hosts.entry(ip).or_insert(HostAgg::new(id, timestamp, link))
+    };
+    // A pseudo-host's MAC is a group address or a client's before it has an
+    // address; it must not become evidence or an attribution target.
+    if let Some(mac) = mac.filter(|_| !is_pseudo_host(ip)) {
+        let index = match source {
+            MacSource::Frame => {
+                if agg.last_frame_mac == Some(*mac) {
+                    return Ok(agg.id);
+                }
+                agg.last_frame_mac = Some(*mac);
+                frame_mac_index
+            }
+            _ => mac_index,
+        };
+        let ids = index.entry(*mac).or_default();
+        if !ids.contains(&agg.id) {
+            ids.push(agg.id);
+        }
+        evidence.record(
+            agg.id,
+            source.name(),
+            Fact::new(kind::MAC, format_mac(Some(mac)), source.confidence()),
+            timestamp,
+        );
+    }
+    Ok(agg.id)
+}
+
+/// A device known only by its MAC. Its `mac_address` is its identity, so no
+/// `mac` evidence is recorded for it.
+fn upsert_mac_host(
+    conn: &rusqlite::Connection,
+    state: &mut IngestState,
+    mac: [u8; 6],
+    link: u8,
+    timestamp: f64,
+) -> Result<i64, CoreError> {
+    if let Some(agg) = state.mac_hosts.get_mut(&mac) {
+        agg.touch(timestamp, link);
         return Ok(agg.id);
     }
-    // `IpAddr::to_string` is the one and only address formatter — IPv6 comes
-    // out in its canonical compressed form, so the same address always maps
-    // to the same row.
-    let ip_str = ip.to_string();
-    let mac_str = format_mac(mac);
-    let vendor = mac.and_then(|m| oui::lookup_vendor(m));
-    let id = queries::insert_host(conn, &mac_str, &ip_str, vendor, timestamp)?;
-    state.hosts.insert(
-        ip,
-        HostAgg {
-            id,
-            first_seen: timestamp,
-            last_seen: timestamp,
-            link_seen: link,
-            link_stored: 0,
-        },
-    );
+    let id = queries::insert_host(
+        conn,
+        &format_mac(Some(&mac)),
+        None,
+        oui::lookup_vendor(&mac),
+        timestamp,
+    )?;
+    state
+        .mac_hosts
+        .insert(mac, HostAgg::new(id, timestamp, link));
     Ok(id)
 }
 
@@ -857,11 +1204,12 @@ mod tests {
     }
 
     #[test]
-    fn mac_formatting() {
+    fn mac_formatting_round_trips() {
         assert_eq!(format_mac(None), "");
-        assert_eq!(
-            format_mac(Some(&[0, 0x1b, 0x1b, 0xaa, 0xbb, 0xcc])),
-            "00:1b:1b:aa:bb:cc"
-        );
+        let mac = [0, 0x1b, 0x1b, 0xaa, 0xbb, 0xcc];
+        assert_eq!(format_mac(Some(&mac)), "00:1b:1b:aa:bb:cc");
+        assert_eq!(parse_mac("00:1b:1b:aa:bb:cc"), Some(mac));
+        assert_eq!(parse_mac(""), None);
+        assert_eq!(parse_mac("00:1b:1b:aa:bb:cc:dd"), None);
     }
 }

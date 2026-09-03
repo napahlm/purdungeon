@@ -99,9 +99,13 @@ pub struct ImportResult {
 pub struct Host {
     pub id: i64,
     /// Empty when the capture's link type carries no MAC (cooked, raw IP).
+    /// The best-evidenced MAC: ARP, DHCP and LLDP/CDP outrank a frame's.
     pub mac_address: String,
-    /// IPv4 dotted quad or IPv6 in RFC 5952 compressed form.
-    pub ip_address: String,
+    /// IPv4 dotted quad or IPv6 in RFC 5952 compressed form; `None` for a
+    /// device known only by its MAC (seen in LLDP/CDP/DHCP, never in IP
+    /// traffic).
+    pub ip_address: Option<String>,
+    /// The best-evidenced name (DHCP, `NetBIOS`, mDNS, LLMNR, SNMP, LLDP, CDP).
     pub hostname: Option<String>,
     pub vendor: Option<String>,
     pub role: String,
@@ -146,6 +150,27 @@ pub struct HistogramBucket {
     pub byte_count: i64,
 }
 
+/// One thing a protocol said about a device. Every identity claim in the UI
+/// and the exports traces back to rows like this.
+#[derive(Debug, Clone, Serialize)]
+pub struct Evidence {
+    pub id: i64,
+    pub host_id: i64,
+    /// `hostname`, `mac`, `os`, `vendor`, `description`, `model`,
+    /// `capabilities`, `port`, `service`, `management-address`, …
+    pub kind: String,
+    pub value: String,
+    /// `arp`, `ethernet`, `dhcp`, `nbns`, `mdns`, `llmnr`, `snmp`, `lldp`, `cdp`.
+    pub source_protocol: String,
+    pub first_seen: f64,
+    pub last_seen: f64,
+    /// How far the value can be trusted to describe this device: a
+    /// self-declared name is high, a guessed operating system is low.
+    pub confidence: f64,
+    /// How many packets said so.
+    pub count: i64,
+}
+
 #[derive(Debug, Serialize)]
 pub struct HostDetail {
     pub host: Host,
@@ -154,6 +179,8 @@ pub struct HostDetail {
     pub total_bytes: i64,
     /// Distinct VLAN ids across the host's conversations, sorted.
     pub vlans: Vec<i64>,
+    /// Everything the capture said about this device, by kind then confidence.
+    pub evidence: Vec<Evidence>,
 }
 
 #[derive(Debug, Serialize)]

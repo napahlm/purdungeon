@@ -33,7 +33,7 @@ struct Summary {
     host_count: usize,
     connection_count: usize,
     time_range: (f64, f64),
-    /// Sorted by address (IPv4 before IPv6).
+    /// Sorted by address (IPv4 before IPv6), then MAC-only devices by MAC.
     hosts: Vec<HostLine>,
     /// IP protocol name → number of conversations.
     transports: BTreeMap<String, usize>,
@@ -41,38 +41,54 @@ struct Summary {
     app_protocols: BTreeMap<String, usize>,
     /// Distinct VLAN ids seen on conversations.
     vlans: Vec<i64>,
+    /// Evidence rows per kind, across every device.
+    evidence: BTreeMap<String, usize>,
 }
 
 #[derive(Serialize)]
 struct HostLine {
-    ip: String,
+    ip: Option<String>,
     mac: String,
     vendor: Option<String>,
+    hostname: Option<String>,
     link_protocols: String,
 }
 
+/// IP hosts first by address, then MAC-only devices by MAC.
+type HostSortKey = (u8, Option<IpAddr>, String);
+
 fn summarize(fixture: &str, session: &Session, result: &ImportResult) -> Summary {
-    let mut hosts: Vec<(IpAddr, HostLine)> = session
+    let mut evidence: BTreeMap<String, usize> = BTreeMap::new();
+    let mut hosts: Vec<(HostSortKey, HostLine)> = session
         .hosts()
         .unwrap()
         .into_iter()
         .map(|h| {
-            let addr: IpAddr = h
-                .ip_address
-                .parse()
-                .unwrap_or_else(|_| panic!("stored address is not an IP: {}", h.ip_address));
+            for row in session.host_detail(h.id).unwrap().evidence {
+                *evidence.entry(row.kind).or_insert(0) += 1;
+            }
+            let key = match &h.ip_address {
+                Some(ip) => {
+                    let addr: IpAddr = ip
+                        .parse()
+                        .unwrap_or_else(|_| panic!("stored address is not an IP: {ip}"));
+                    (0, Some(addr), String::new())
+                }
+                None => (1, None, h.mac_address.clone()),
+            };
             (
-                addr,
+                key,
                 HostLine {
                     ip: h.ip_address,
                     mac: h.mac_address,
                     vendor: h.vendor,
+                    hostname: h.hostname,
                     link_protocols: h.link_protocols,
                 },
             )
         })
         .collect();
-    hosts.sort_by_key(|(addr, _)| *addr);
+    hosts.sort_by(|a, b| a.0.cmp(&b.0));
 
     let connections = session.connections().unwrap();
     let mut transports = BTreeMap::new();
@@ -104,6 +120,7 @@ fn summarize(fixture: &str, session: &Session, result: &ImportResult) -> Summary
         transports,
         app_protocols,
         vlans,
+        evidence,
     }
 }
 
@@ -223,6 +240,17 @@ fn golden_synthetic_mixed() {
     check_golden(
         "synthetic-mixed",
         &summarize("synthetic-mixed", &session, &result),
+    );
+}
+
+#[test]
+fn golden_synthetic_identity() {
+    let bytes = common::write_pcap(&common::identity::identity_capture());
+    let (session, result) = common::import_bytes("golden-identity", &bytes).unwrap();
+    common::assert_reconciles(&result);
+    check_golden(
+        "synthetic-identity",
+        &summarize("synthetic-identity", &session, &result),
     );
 }
 

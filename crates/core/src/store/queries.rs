@@ -1,6 +1,6 @@
 use rusqlite::{params, Connection};
 
-use crate::types::{Connection as NetConnection, Host, HostConnection, HostDetail};
+use crate::types::{Connection as NetConnection, Evidence, Host, HostConnection, HostDetail};
 use crate::CoreError;
 
 // ── Bulk-import helper: insert a first-sighted host and return its id ────────
@@ -12,7 +12,7 @@ use crate::CoreError;
 pub fn insert_host(
     conn: &Connection,
     mac: &str,
-    ip: &str,
+    ip: Option<&str>,
     vendor: Option<&str>,
     timestamp: f64,
 ) -> Result<i64, CoreError> {
@@ -227,7 +227,7 @@ pub fn get_host_detail(conn: &Connection, host_id: i64) -> Result<HostDetail, Co
     )?;
 
     let mut stmt = conn.prepare(
-        "SELECT c.id, h.ip_address, h.mac_address,
+        "SELECT c.id, COALESCE(h.ip_address, h.mac_address), h.mac_address,
                 CASE WHEN c.src_host_id = ?1 THEN 'outbound' ELSE 'inbound' END,
                 c.src_port, c.dst_port, c.protocol, c.app_protocol,
                 c.packet_count, c.byte_count, c.first_seen, c.last_seen
@@ -271,11 +271,37 @@ pub fn get_host_detail(conn: &Connection, host_id: i64) -> Result<HostDetail, Co
         .query_map(params![host_id], |row| row.get(0))?
         .collect::<Result<Vec<_>, _>>()?;
 
+    let evidence = get_host_evidence(conn, host_id)?;
+
     Ok(HostDetail {
         host,
         connections,
         total_packets,
         total_bytes,
         vlans,
+        evidence,
     })
+}
+
+/// Everything the capture said about a device, by kind then confidence.
+pub fn get_host_evidence(conn: &Connection, host_id: i64) -> Result<Vec<Evidence>, CoreError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, host_id, kind, value, source_protocol, first_seen, last_seen, confidence, count
+         FROM evidence WHERE host_id = ?1
+         ORDER BY kind, confidence DESC, count DESC, value",
+    )?;
+    let rows = stmt.query_map(params![host_id], |row| {
+        Ok(Evidence {
+            id: row.get(0)?,
+            host_id: row.get(1)?,
+            kind: row.get(2)?,
+            value: row.get(3)?,
+            source_protocol: row.get(4)?,
+            first_seen: row.get(5)?,
+            last_seen: row.get(6)?,
+            confidence: row.get(7)?,
+            count: row.get(8)?,
+        })
+    })?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(CoreError::from)
 }

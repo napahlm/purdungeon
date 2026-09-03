@@ -28,18 +28,21 @@
       "ip": "192.168.0.1",
       "mac": "ac:64:17:46:0d:51",
       "vendor": null,
+      "hostname": null,
       "link_protocols": ""
     },
     {
       "ip": "192.168.0.3",
-      "mac": "",
+      "mac": "ac:64:17:46:cb:52",
       "vendor": null,
+      "hostname": null,
       "link_protocols": ""
     },
     {
       "ip": "192.168.0.33",
       "mac": "00:50:56:bd:18:fd",
       "vendor": "VMware",
+      "hostname": null,
       "link_protocols": ""
     }
   ],
@@ -49,5 +52,8 @@
   "app_protocols": {
     "s7comm": 6
   },
-  "vlans": []
+  "vlans": [],
+  "evidence": {
+    "mac": 3
+  }
 }

@@ -13,7 +13,9 @@ use etherparse::{
 };
 
 use crate::ingest::link::Macs;
-use crate::protocols::{arp, cdp, lldp};
+use crate::protocols::arp;
+use crate::protocols::cdp::{self, CdpInfo};
+use crate::protocols::lldp::{self, LldpInfo};
 
 /// IEEE 802.1AE (`MACsec`) ethertype; a protected payload is opaque to us.
 const ETHERTYPE_MACSEC: u16 = 0x88E5;
@@ -31,6 +33,7 @@ pub(crate) enum Transport<'a> {
     Udp {
         src_port: u16,
         dst_port: u16,
+        payload: &'a [u8],
     },
     /// ICMP (v4 and v6), IGMP and every other IP protocol: a port-less flow.
     Portless,
@@ -53,8 +56,8 @@ pub(crate) enum Frame<'a> {
     },
     /// ARP; `None` when the hardware/protocol pair is not Ethernet/IPv4.
     Arp(Option<arp::ArpInfo>),
-    Lldp,
-    Cdp,
+    Lldp(LldpInfo),
+    Cdp(CdpInfo),
     /// An Ethernet payload we do not read: other ethertypes (PROFINET RT,
     /// `EtherCAT`, …) and non-CDP 802.3/LLC frames (spanning tree, …).
     OtherEthertype,
@@ -171,6 +174,7 @@ fn transport<'a>(slice: Option<&TransportSlice<'a>>) -> Transport<'a> {
         Some(TransportSlice::Udp(udp)) => Transport::Udp {
             src_port: udp.source_port(),
             dst_port: udp.destination_port(),
+            payload: udp.payload(),
         },
         _ => Transport::Portless,
     }
@@ -207,14 +211,16 @@ fn classify_non_ip<'a>(parsed: &LaxSlicedPacket<'a>) -> Frame<'a> {
         return Frame::Malformed { hosts: None };
     };
     if ether_type == lldp::ETHERTYPE_LLDP {
-        return if lldp::is_lldp(ether_type, payload) {
-            Frame::Lldp
-        } else {
-            Frame::Malformed { hosts: None }
+        return match lldp::parse(payload) {
+            Some(info) => Frame::Lldp(info),
+            None => Frame::Malformed { hosts: None },
         };
     }
     if ether_type <= MAX_802_3_LENGTH && cdp::is_cdp(payload) {
-        return Frame::Cdp;
+        return match cdp::parse(payload) {
+            Some(info) => Frame::Cdp(info),
+            None => Frame::Malformed { hosts: None },
+        };
     }
     Frame::OtherEthertype
 }

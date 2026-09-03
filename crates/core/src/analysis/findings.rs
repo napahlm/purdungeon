@@ -82,8 +82,9 @@ fn severity_rank(severity: &str) -> u8 {
 }
 
 fn load_hosts(conn: &Connection) -> Result<HashMap<i64, HostInfo>, CoreError> {
-    let mut stmt =
-        conn.prepare("SELECT id, ip_address, role, purdue_level, is_external FROM hosts")?;
+    let mut stmt = conn.prepare(
+        "SELECT id, COALESCE(ip_address, mac_address), role, purdue_level, is_external FROM hosts",
+    )?;
     let rows = stmt.query_map([], |row| {
         Ok((
             row.get::<_, i64>(0)?,

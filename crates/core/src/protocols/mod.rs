@@ -1,5 +1,9 @@
 pub mod arp;
 pub mod cdp;
+pub mod dhcp;
+pub mod dns;
 pub mod ip_proto;
 pub mod lldp;
 pub mod modbus;
+pub mod nbns;
+pub mod snmp;

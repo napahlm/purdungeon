@@ -3,6 +3,8 @@
 //! capture ends with [`assert_reconciles`].
 #![allow(dead_code)]
 
+pub mod identity;
+
 use std::path::Path;
 use std::sync::atomic::AtomicU64;
 

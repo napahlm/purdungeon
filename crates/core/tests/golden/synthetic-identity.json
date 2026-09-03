@@ -1,0 +1,141 @@
+{
+  "fixture": "synthetic-identity",
+  "frames_read": 16,
+  "packet_count": 16,
+  "decoded": {
+    "ipv4": 11,
+    "ipv6": 0,
+    "arp": 2,
+    "lldp": 2,
+    "cdp": 1
+  },
+  "skipped": {
+    "unsupported_link_type": 0,
+    "other_ethertype": 0,
+    "fragment": 0,
+    "truncated": 0,
+    "malformed": 0,
+    "no_timestamp": 0
+  },
+  "host_count": 12,
+  "connection_count": 10,
+  "time_range": [
+    1700000000.0,
+    1700000006.5
+  ],
+  "hosts": [
+    {
+      "ip": "0.0.0.0",
+      "mac": "00:50:56:01:02:03",
+      "vendor": "VMware",
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "192.168.10.1",
+      "mac": "00:1b:1b:44:55:66",
+      "vendor": "Siemens",
+      "hostname": "plc-line1",
+      "link_protocols": "lldp"
+    },
+    {
+      "ip": "192.168.10.2",
+      "mac": "00:80:63:01:02:03",
+      "vendor": "Hirschmann",
+      "hostname": "SW-CORE",
+      "link_protocols": "lldp"
+    },
+    {
+      "ip": "192.168.10.60",
+      "mac": "00:0c:29:60:60:60",
+      "vendor": "VMware",
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "192.168.10.77",
+      "mac": "00:50:56:01:02:03",
+      "vendor": "VMware",
+      "hostname": "ENG-WS01",
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "192.168.10.90",
+      "mac": "00:0c:29:90:90:90",
+      "vendor": "VMware",
+      "hostname": "printer",
+      "link_protocols": ""
+    },
+    {
+      "ip": "192.168.10.100",
+      "mac": "00:0c:29:11:22:33",
+      "vendor": "VMware",
+      "hostname": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "192.168.10.254",
+      "mac": "00:1e:14:00:00:01",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "192.168.10.255",
+      "mac": "ff:ff:ff:ff:ff:ff",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "224.0.0.251",
+      "mac": "01:00:5e:00:00:fb",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "255.255.255.255",
+      "mac": "ff:ff:ff:ff:ff:ff",
+      "vendor": null,
+      "hostname": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": null,
+      "mac": "00:1e:14:aa:bb:cc",
+      "vendor": null,
+      "hostname": "SW-ACCESS-2",
+      "link_protocols": "cdp"
+    }
+  ],
+  "transports": {
+    "TCP": 4,
+    "UDP": 6
+  },
+  "app_protocols": {
+    "dhcp": 2,
+    "http": 2,
+    "modbus": 2,
+    "netbios": 1,
+    "snmp": 1,
+    "unnamed": 2
+  },
+  "vlans": [],
+  "evidence": {
+    "capabilities": 3,
+    "description": 4,
+    "dhcp-fingerprint": 1,
+    "domain": 2,
+    "hostname": 8,
+    "mac": 14,
+    "management-address": 2,
+    "model": 2,
+    "os": 1,
+    "port": 3,
+    "service": 1,
+    "sysobjectid": 1,
+    "vendor": 1,
+    "vendor-class": 1
+  }
+}
