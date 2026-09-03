@@ -6,6 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
+use std::net::{IpAddr, Ipv4Addr};
 
 use rusqlite::{params, Connection};
 
@@ -79,33 +80,49 @@ pub struct HostProfile {
     pub ports_contacted: i64,
     pub vendor: Option<String>,
     pub ip: String,
+    /// Comma-joined link-layer protocols the host was seen in (`arp`, …).
+    pub link_protocols: String,
+    /// Conversations the host takes part in, in either direction.
+    pub flow_count: i64,
 }
 
 fn matches_vendor(vendor: Option<&str>, list: &[&str]) -> bool {
     vendor.is_some_and(|v| list.iter().any(|known| v.contains(known)))
 }
 
+/// Addresses that are unambiguously not hosts: IPv4 multicast (224/4) and
+/// limited broadcast, IPv6 multicast (`ff00::/8`). An `x.x.x.255` suffix is
+/// NOT enough — in a /23 or larger subnet that is a legitimate host address,
+/// and misclassifying it would hide a real device.
 fn is_multicast_or_broadcast(ip: &str) -> bool {
-    let Some(first) = ip.split('.').next().and_then(|o| o.parse::<u8>().ok()) else {
-        return false;
-    };
-    // Only the addresses that are unambiguously not hosts. An `x.x.x.255`
-    // suffix is NOT enough — in a /23 or larger subnet that is a legitimate
-    // host address, and misclassifying it would hide a real device.
-    (224..=239).contains(&first) || ip == "255.255.255.255"
+    match ip.parse::<IpAddr>() {
+        Ok(IpAddr::V4(v4)) => v4.is_multicast() || v4.is_broadcast(),
+        Ok(IpAddr::V6(v6)) => v6.is_multicast(),
+        Err(_) => false,
+    }
 }
 
+fn is_private_v4(v4: Ipv4Addr) -> bool {
+    v4.is_private() || v4.is_loopback() || v4.is_link_local() || v4.is_unspecified()
+}
+
+/// Addresses that belong on a private network: RFC 1918, loopback and
+/// link-local for IPv4; unique-local (`fc00::/7`), link-local (`fe80::/10`)
+/// and loopback for IPv6, with IPv4-mapped addresses judged by the IPv4 inside.
+/// Unparseable addresses are not flagged.
 fn is_private(ip: &str) -> bool {
-    let octets: Vec<u8> = ip.split('.').filter_map(|o| o.parse().ok()).collect();
-    if octets.len() != 4 {
-        return true; // don't flag unparseable addresses
-    }
-    match octets[0] {
-        10 | 127 => true,
-        172 => (16..=31).contains(&octets[1]),
-        192 => octets[1] == 168,
-        169 => octets[1] == 254,
-        _ => false,
+    match ip.parse::<IpAddr>() {
+        Ok(IpAddr::V4(v4)) => is_private_v4(v4),
+        Ok(IpAddr::V6(v6)) => match v6.to_ipv4_mapped() {
+            Some(v4) => is_private_v4(v4),
+            None => {
+                v6.is_unique_local()
+                    || v6.is_unicast_link_local()
+                    || v6.is_loopback()
+                    || v6.is_unspecified()
+            }
+        },
+        Err(_) => true,
     }
 }
 
@@ -133,14 +150,17 @@ pub fn build_profiles(conn: &Connection) -> Result<HashMap<i64, HostProfile>, Co
     let mut profiles: HashMap<i64, HostProfile> = HashMap::new();
 
     // Seed every host so unknowns still get a row
-    let mut stmt = conn.prepare("SELECT id, ip_address, vendor FROM hosts")?;
-    let hosts: Vec<(i64, String, Option<String>)> = stmt
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+    let mut stmt = conn.prepare("SELECT id, ip_address, vendor, link_protocols FROM hosts")?;
+    let hosts: Vec<(i64, String, Option<String>, String)> = stmt
+        .query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })?
         .collect::<Result<Vec<_>, _>>()?;
-    for (id, ip, vendor) in hosts {
+    for (id, ip, vendor, link_protocols) in hosts {
         let p = profiles.entry(id).or_default();
         p.ip = ip;
         p.vendor = vendor;
+        p.link_protocols = link_protocols;
     }
 
     // Modbus client activity
@@ -230,7 +250,31 @@ pub fn build_profiles(conn: &Connection) -> Result<HashMap<i64, HostProfile>, Co
         p.ports_contacted = ports_contacted;
     }
 
+    load_flow_counts(conn, &mut profiles)?;
+
     Ok(profiles)
+}
+
+/// How many conversations each host takes part in at all, so a host known
+/// only from ARP can say so in its evidence.
+fn load_flow_counts(
+    conn: &Connection,
+    profiles: &mut HashMap<i64, HostProfile>,
+) -> Result<(), CoreError> {
+    let mut stmt = conn.prepare(
+        "SELECT host_id, COUNT(*) FROM (
+            SELECT src_host_id AS host_id FROM connections
+            UNION ALL
+            SELECT dst_host_id AS host_id FROM connections
+         ) GROUP BY host_id",
+    )?;
+    let rows: Vec<(i64, i64)> = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<Result<Vec<_>, _>>()?;
+    for (id, flows) in rows {
+        profiles.entry(id).or_default().flow_count = flows;
+    }
+    Ok(())
 }
 
 struct Inference {
@@ -419,12 +463,26 @@ fn infer_without_control_traffic(
             evidence: "only initiates IT-protocol traffic".into(),
         };
     }
+    // Seen only in link-layer announcements (ARP) with no IP conversation at
+    // all: say so, because "not enough traffic" would suggest the capture
+    // simply missed it.
+    let link_only = profile.flow_count == 0 && !profile.link_protocols.is_empty();
+    let link_list = || profile.link_protocols.to_uppercase().replace(',', ", ");
     if ot_vendor {
+        let evidence = if link_only {
+            format!(
+                "{} hardware, seen only in {}",
+                vendor.unwrap_or_default(),
+                link_list()
+            )
+        } else {
+            format!("{} hardware", vendor.unwrap_or_default())
+        };
         return Inference {
             role: "field-device",
             confidence: 0.4,
             level: Some(1),
-            evidence: format!("{} hardware", vendor.unwrap_or_default()),
+            evidence,
         };
     }
 
@@ -432,7 +490,11 @@ fn infer_without_control_traffic(
         role: "unknown",
         confidence: 0.0,
         level: None,
-        evidence: "not enough traffic to classify".into(),
+        evidence: if link_only {
+            format!("seen only in {}; no IP traffic", link_list())
+        } else {
+            "not enough traffic to classify".into()
+        },
     }
 }
 
@@ -522,5 +584,30 @@ mod tests {
         let inf = infer(&profile);
         assert_eq!(inf.role, "engineering-workstation");
         assert_eq!(inf.level, Some(3));
+    }
+}
+
+#[cfg(test)]
+mod address_tests {
+    use super::{is_multicast_or_broadcast, is_private};
+
+    #[test]
+    fn ipv6_private_ranges() {
+        assert!(is_private("fe80::1"));
+        assert!(is_private("fd12:3456::1"));
+        assert!(is_private("::1"));
+        assert!(is_private("::ffff:10.0.0.1"));
+        assert!(!is_private("2001:db8::1"));
+        assert!(!is_private("::ffff:8.8.8.8"));
+    }
+
+    #[test]
+    fn multicast_in_both_families_is_not_an_asset() {
+        assert!(is_multicast_or_broadcast("ff02::1"));
+        assert!(is_multicast_or_broadcast("ff02::fb"));
+        assert!(!is_multicast_or_broadcast("fe80::1"));
+        assert!(is_multicast_or_broadcast("239.255.255.250"));
+        assert!(is_multicast_or_broadcast("255.255.255.255"));
+        assert!(!is_multicast_or_broadcast("192.168.1.255"));
     }
 }

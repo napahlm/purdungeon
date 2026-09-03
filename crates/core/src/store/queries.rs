@@ -26,7 +26,7 @@ pub fn insert_host(
 
 const HOST_COLUMNS: &str = "id, mac_address, ip_address, hostname, vendor, role,
     role_confidence, role_evidence, purdue_level, role_override, level_override,
-    protocols, is_external, first_seen, last_seen";
+    protocols, is_external, first_seen, last_seen, link_protocols";
 
 fn host_from_row(row: &rusqlite::Row) -> Result<Host, rusqlite::Error> {
     Ok(Host {
@@ -45,6 +45,7 @@ fn host_from_row(row: &rusqlite::Row) -> Result<Host, rusqlite::Error> {
         is_external: row.get::<_, i64>(12)? != 0,
         first_seen: row.get(13)?,
         last_seen: row.get(14)?,
+        link_protocols: row.get(15)?,
     })
 }
 
@@ -120,7 +121,7 @@ pub fn set_level_override(
 pub fn get_all_connections(conn: &Connection) -> Result<Vec<NetConnection>, CoreError> {
     let mut stmt = conn.prepare(
         "SELECT id, src_host_id, dst_host_id, src_port, dst_port, protocol,
-                app_protocol, packet_count, byte_count, first_seen, last_seen
+                app_protocol, packet_count, byte_count, first_seen, last_seen, vlan_id
          FROM connections",
     )?;
     let rows = stmt.query_map([], |row| {
@@ -136,6 +137,7 @@ pub fn get_all_connections(conn: &Connection) -> Result<Vec<NetConnection>, Core
             byte_count: row.get(8)?,
             first_seen: row.get(9)?,
             last_seen: row.get(10)?,
+            vlan_id: row.get(11)?,
         })
     })?;
     let mut connections = Vec::new();
@@ -260,10 +262,20 @@ pub fn get_host_detail(conn: &Connection, host_id: i64) -> Result<HostDetail, Co
         |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
 
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT vlan_id FROM connections
+         WHERE vlan_id IS NOT NULL AND (src_host_id = ?1 OR dst_host_id = ?1)
+         ORDER BY vlan_id",
+    )?;
+    let vlans: Vec<i64> = stmt
+        .query_map(params![host_id], |row| row.get(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+
     Ok(HostDetail {
         host,
         connections,
         total_packets,
         total_bytes,
+        vlans,
     })
 }

@@ -32,6 +32,7 @@ pub fn init_db() -> Result<(Connection, PathBuf), CoreError> {
             role_override TEXT,
             level_override INTEGER,
             protocols TEXT NOT NULL DEFAULT '',
+            link_protocols TEXT NOT NULL DEFAULT '',
             is_external INTEGER NOT NULL DEFAULT 0,
             first_seen REAL NOT NULL,
             last_seen REAL NOT NULL
@@ -45,6 +46,7 @@ pub fn init_db() -> Result<(Connection, PathBuf), CoreError> {
             dst_port INTEGER NOT NULL,
             protocol TEXT NOT NULL,
             app_protocol TEXT,
+            vlan_id INTEGER,
             packet_count INTEGER NOT NULL DEFAULT 1,
             byte_count INTEGER NOT NULL DEFAULT 0,
             first_seen REAL NOT NULL,
@@ -53,7 +55,8 @@ pub fn init_db() -> Result<(Connection, PathBuf), CoreError> {
 
         CREATE TABLE IF NOT EXISTS packets (
             id INTEGER PRIMARY KEY,
-            connection_id INTEGER NOT NULL,
+            -- NULL for link-layer-only frames (ARP, LLDP, CDP)
+            connection_id INTEGER,
             timestamp REAL NOT NULL,
             length INTEGER NOT NULL
         );

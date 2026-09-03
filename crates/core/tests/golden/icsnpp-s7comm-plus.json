@@ -1,0 +1,53 @@
+{
+  "fixture": "icsnpp-s7comm-plus",
+  "frames_read": 262,
+  "packet_count": 262,
+  "decoded": {
+    "ipv4": 262,
+    "ipv6": 0,
+    "arp": 0,
+    "lldp": 0,
+    "cdp": 0
+  },
+  "skipped": {
+    "unsupported_link_type": 0,
+    "other_ethertype": 0,
+    "fragment": 0,
+    "truncated": 0,
+    "malformed": 0,
+    "no_timestamp": 0
+  },
+  "host_count": 3,
+  "connection_count": 6,
+  "time_range": [
+    1595359704.607623,
+    1595359783.608118
+  ],
+  "hosts": [
+    {
+      "ip": "192.168.0.1",
+      "mac": "ac:64:17:46:0d:51",
+      "vendor": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "192.168.0.3",
+      "mac": "",
+      "vendor": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "192.168.0.33",
+      "mac": "00:50:56:bd:18:fd",
+      "vendor": "VMware",
+      "link_protocols": ""
+    }
+  ],
+  "transports": {
+    "TCP": 6
+  },
+  "app_protocols": {
+    "s7comm": 6
+  },
+  "vlans": []
+}

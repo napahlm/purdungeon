@@ -1,0 +1,35 @@
+# Committed fixture captures for the golden tests (tests/golden.rs).
+#
+# Each file is small enough to live in git. Its sha256 is asserted by the
+# tests, so a line-ending conversion or a silent replacement fails loudly.
+# The golden snapshots in tests/golden/ legitimately change when oui.toml or
+# analysis/ports.rs change — regenerate with `just golden-update` and review
+# the diff.
+#
+# All three come from CISA's ICSNPP Zeek analyzer packages (BSD-3-Clause,
+# Battelle Energy Alliance, LLC). The licence and notice are reproduced in
+# LICENSE-ICSNPP.txt and NOTICE-ICSNPP.txt as the licence requires.
+
+[[fixture]]
+name = "icsnpp-modbus"
+file = "icsnpp-modbus.pcap"
+source = "https://github.com/cisagov/icsnpp-modbus/blob/27f22b41fd9839c0bad1b98df9c6289e578fd02a/testing/traces/modbus_example.pcap"
+licence = "BSD-3-Clause"
+sha256 = "a84656f9af62b2c948200ec288d51b81f03037c277a31a40efee0cfb244f1e30"
+notes = "Modbus TCP polling between three devices, IPv4 over Ethernet"
+
+[[fixture]]
+name = "icsnpp-s7comm-plus"
+file = "icsnpp-s7comm-plus.pcap"
+source = "https://github.com/cisagov/icsnpp-s7comm/blob/7ebeb03a0f954541369361651d1c27d09a64b5a3/testing/traces/s7comm_plus.pcap"
+licence = "BSD-3-Clause"
+sha256 = "2f9befe0667443fb86b7184b6ff7fcc4eb61fae67d3ce30793ce7b2937067b0c"
+notes = "S7comm-plus session on port 102 in a Linux cooked (SLL) capture — no destination MACs"
+
+[[fixture]]
+name = "icsnpp-profinet-mixed"
+file = "icsnpp-profinet-mixed.pcap"
+source = "https://github.com/cisagov/icsnpp-profinet-io-cm/blob/833a78c04c2f623f6afcda6d3dc72cc288cb11d8/testing/traces/profinet_io_cm_mixed_1.pcap"
+licence = "BSD-3-Clause"
+sha256 = "e03c1937c33e95922e899d1e65a858292b61ca4a24040906de2c87935ba05f84"
+notes = "PROFINET IO-CM over DCE/RPC plus LLDP, ARP, IPv6, ICMPv6, IGMP, PROFINET RT and DCP frames, DHCP, NBNS and LLMNR chatter"

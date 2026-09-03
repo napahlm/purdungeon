@@ -23,37 +23,84 @@ pub struct Finding {
     pub connection_ids: Vec<i64>,
 }
 
-/// Packets read but not imported, by reason. Lets the UI say *why* a capture
+/// Frames that were decoded, by what they carried. Every one of these became
+/// a row in `packets`, so the timeline counts them too.
+#[derive(Debug, Default, Clone, Copy, Serialize)]
+pub struct LinkLayerCounts {
+    pub ipv4: usize,
+    pub ipv6: usize,
+    /// ARP announcements: they add devices but carry no IP conversation.
+    pub arp: usize,
+    /// LLDP and CDP are recognised and counted; their contents become device
+    /// evidence in a later release.
+    pub lldp: usize,
+    pub cdp: usize,
+}
+
+impl LinkLayerCounts {
+    #[must_use]
+    pub fn total(&self) -> usize {
+        self.ipv4 + self.ipv6 + self.arp + self.lldp + self.cdp
+    }
+}
+
+/// Frames read but not decoded, by reason. Lets the UI say *why* a capture
 /// looks thin instead of leaving "0 packets" ambiguous.
 #[derive(Debug, Default, Clone, Copy, Serialize)]
 pub struct SkippedPackets {
-    pub ipv6: usize,
-    pub arp: usize,
-    /// Everything else: non-IP frames, unsupported transports, unreadable
-    /// link types, truncated or undecodable packets.
-    pub other: usize,
+    /// The interface's link type is one we do not read (Wi-Fi, USB, …).
+    pub unsupported_link_type: usize,
+    /// Ethernet payloads we do not read: other ethertypes (PROFINET RT,
+    /// `EtherCAT`, …) and non-CDP 802.3/LLC frames (spanning tree, …).
+    pub other_ethertype: usize,
+    /// Non-first IP fragments; hosts are recorded, the transport is unknown.
+    pub fragment: usize,
+    /// A header was cut off by the capture's snapshot length.
+    pub truncated: usize,
+    /// A header that could not be decoded, or a record cut off by the end of
+    /// the file.
+    pub malformed: usize,
+    /// Records without a usable timestamp (pcapng Simple Packet Blocks, or a
+    /// zero timestamp).
+    pub no_timestamp: usize,
 }
 
 impl SkippedPackets {
     #[must_use]
     pub fn total(&self) -> usize {
-        self.ipv6 + self.arp + self.other
+        self.unsupported_link_type
+            + self.other_ethertype
+            + self.fragment
+            + self.truncated
+            + self.malformed
+            + self.no_timestamp
     }
 }
 
+/// What one import did. `frames_read == packet_count + skipped.total()` and
+/// `packet_count == decoded.total()` always hold — the counters reconcile
+/// with the file, nothing is dropped unaccounted for.
 #[derive(Debug, Clone, Serialize)]
 pub struct ImportResult {
+    /// Every record in the file, whatever became of it.
+    pub frames_read: usize,
+    /// Frames that were decoded and recorded (IP packets and link-layer
+    /// announcements alike).
+    pub packet_count: usize,
+    pub decoded: LinkLayerCounts,
+    pub skipped: SkippedPackets,
+    /// Session totals after this import (cumulative on append).
     pub host_count: usize,
     pub connection_count: usize,
-    pub packet_count: usize,
-    pub skipped: SkippedPackets,
     pub time_range: (f64, f64),
 }
 
 #[derive(Debug, Serialize)]
 pub struct Host {
     pub id: i64,
+    /// Empty when the capture's link type carries no MAC (cooked, raw IP).
     pub mac_address: String,
+    /// IPv4 dotted quad or IPv6 in RFC 5952 compressed form.
     pub ip_address: String,
     pub hostname: Option<String>,
     pub vendor: Option<String>,
@@ -64,6 +111,8 @@ pub struct Host {
     pub role_override: Option<String>,
     pub level_override: Option<i64>,
     pub protocols: String,
+    /// Comma-joined link-layer protocols the host was seen in (e.g. `arp`).
+    pub link_protocols: String,
     pub is_external: bool,
     pub first_seen: f64,
     pub last_seen: f64,
@@ -76,8 +125,13 @@ pub struct Connection {
     pub dst_host_id: i64,
     pub src_port: u16,
     pub dst_port: u16,
+    /// IP protocol name: TCP, UDP, ICMP, `ICMPv6`, IGMP, VRRP, … Port-less
+    /// protocols use ports 0/0.
     pub protocol: String,
     pub app_protocol: Option<String>,
+    /// 802.1Q VLAN id of the first frame seen on this flow; `None` when
+    /// untagged.
+    pub vlan_id: Option<i64>,
     pub packet_count: i64,
     pub byte_count: i64,
     pub first_seen: f64,
@@ -98,6 +152,8 @@ pub struct HostDetail {
     pub connections: Vec<HostConnection>,
     pub total_packets: i64,
     pub total_bytes: i64,
+    /// Distinct VLAN ids across the host's conversations, sorted.
+    pub vlans: Vec<i64>,
 }
 
 #[derive(Debug, Serialize)]

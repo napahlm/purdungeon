@@ -1,0 +1,118 @@
+{
+  "fixture": "corpus-4sics-geeklounge-151020",
+  "frames_read": 246137,
+  "packet_count": 243656,
+  "decoded": {
+    "ipv4": 239267,
+    "ipv6": 0,
+    "arp": 4389,
+    "lldp": 0,
+    "cdp": 0
+  },
+  "skipped": {
+    "unsupported_link_type": 0,
+    "other_ethertype": 2481,
+    "fragment": 0,
+    "truncated": 0,
+    "malformed": 0,
+    "no_timestamp": 0
+  },
+  "host_count": 13,
+  "connection_count": 17184,
+  "time_range": [
+    1445353834.52471,
+    1445379032.19776
+  ],
+  "hosts": [
+    {
+      "ip": "8.8.8.8",
+      "mac": "00:0a:dc:64:85:c2",
+      "vendor": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "10.10.10.10",
+      "mac": "28:63:36:89:59:82",
+      "vendor": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "10.10.10.20",
+      "mac": "00:1c:06:27:64:11",
+      "vendor": "Siemens",
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "10.10.10.30",
+      "mac": "54:ee:75:3f:4a:db",
+      "vendor": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "10.100.159.38",
+      "mac": "28:cf:e9:18:b5:ed",
+      "vendor": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "17.253.34.253",
+      "mac": "00:0a:dc:64:85:c2",
+      "vendor": null,
+      "link_protocols": ""
+    },
+    {
+      "ip": "21.2.2.2",
+      "mac": "00:07:7c:1a:61:83",
+      "vendor": "Westermo",
+      "link_protocols": ""
+    },
+    {
+      "ip": "192.168.88.1",
+      "mac": "00:07:7c:1a:61:83",
+      "vendor": "Westermo",
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "192.168.88.52",
+      "mac": "28:cf:e9:18:b5:ed",
+      "vendor": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "192.168.88.61",
+      "mac": "00:90:e8:27:8c:37",
+      "vendor": "Moxa",
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "192.168.89.1",
+      "mac": "00:0a:dc:64:85:c2",
+      "vendor": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "192.168.89.2",
+      "mac": "70:71:bc:3a:0d:e8",
+      "vendor": null,
+      "link_protocols": "arp"
+    },
+    {
+      "ip": "192.195.142.13",
+      "mac": "00:07:7c:1a:61:83",
+      "vendor": "Westermo",
+      "link_protocols": ""
+    }
+  ],
+  "transports": {
+    "ICMP": 2,
+    "TCP": 14580,
+    "UDP": 2602
+  },
+  "app_protocols": {
+    "dns": 2598,
+    "ntp": 1,
+    "s7comm": 14580,
+    "unnamed": 5
+  },
+  "vlans": []
+}
