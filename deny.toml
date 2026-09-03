@@ -1,0 +1,35 @@
+# cargo-deny policy. purdungeon is MIT and ships as a single binary, so
+# nothing copyleft may enter the dependency tree.
+#
+# Licences are an allow-list: anything not named here — GPL, LGPL, AGPL,
+# NPSL, SSPL included — fails `cargo deny check licenses`. Add a licence only
+# after reading it; add a crate-specific exception only with a reason.
+
+[graph]
+all-features = false
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "CC0-1.0",
+    "Unlicense",
+    "Unicode-3.0",
+    # File-level copyleft: changes to MPL files must be shared, but linking
+    # them into an MIT program is fine. A handful of Tauri dependencies use it.
+    "MPL-2.0",
+]
+confidence-threshold = 0.8
+
+[bans]
+multiple-versions = "warn"
+wildcards = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
