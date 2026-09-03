@@ -129,7 +129,7 @@ function close() {
           class="inline-block h-2.5 w-2.5 rounded-full"
           :style="{ backgroundColor: levelBadgeColor }"
         />
-        <h2 class="font-mono text-sm font-semibold text-text-primary">
+        <h2 class="truncate font-mono text-sm font-semibold text-text-primary">
           {{ host?.ip_address ?? 'Device' }}
         </h2>
       </div>
@@ -179,12 +179,18 @@ function close() {
           <DetailRow label="Vendor">
             {{ host.vendor ?? '—' }}
           </DetailRow>
+          <DetailRow v-if="host.link_protocols" label="Link-layer">
+            seen in {{ host.link_protocols.toUpperCase().split(',').join(' · ') }}
+          </DetailRow>
           <div v-if="host.protocols" class="flex items-start justify-between gap-3">
             <span class="text-text-secondary">Protocols</span>
             <span class="text-right font-mono text-xs leading-relaxed text-text-primary">
               {{ host.protocols.split(',').join(' · ') }}
             </span>
           </div>
+          <DetailRow v-if="detail.vlans.length" label="VLAN" mono>
+            {{ detail.vlans.join(', ') }}
+          </DetailRow>
           <DetailRow label="First seen">
             {{ formatTime(host.first_seen) }}
           </DetailRow>

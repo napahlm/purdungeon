@@ -5,6 +5,7 @@ import { useTopologyStore } from '@/stores/topology'
 import { useTimelineStore } from '@/stores/timeline'
 import { useTauri } from '@/composables/useTauri'
 import { modKeyLabel } from '@/ui/platform'
+import { describeLinkLayer, describeSkipped, linkLayerTotal, totalSkipped } from '@/utils/skipped'
 
 const appStore = useAppStore()
 const topologyStore = useTopologyStore()
@@ -13,18 +14,21 @@ const { pickAndLoadFiles } = useTauri()
 
 const showSources = ref(false)
 
-// What the parser read but couldn't show, so "why is my network so small?"
-// has an answer right in the header.
-const skippedTotal = computed(
-  () => appStore.skipped.ipv6 + appStore.skipped.arp + appStore.skipped.other,
+// What the parser read but could not decode, by reason, so "why is my
+// network so small?" has an answer right in the header.
+const skippedTotal = computed(() => totalSkipped(appStore.skipped))
+const skippedTitle = computed(
+  () => `Read but not decoded:\n${describeSkipped(appStore.skipped).join('\n')}`,
 )
-const skippedTitle = computed(() => {
-  const parts: string[] = []
-  if (appStore.skipped.ipv6 > 0) parts.push(`${appStore.skipped.ipv6.toLocaleString()} IPv6`)
-  if (appStore.skipped.arp > 0) parts.push(`${appStore.skipped.arp.toLocaleString()} ARP`)
-  if (appStore.skipped.other > 0) parts.push(`${appStore.skipped.other.toLocaleString()} other`)
-  return `Not shown: ${parts.join(', ')} — purdungeon currently reads IPv4 over Ethernet`
-})
+
+// Link-layer announcements are decoded but draw no links; say so plainly.
+const linkLayerCount = computed(() => linkLayerTotal(appStore.decoded))
+const linkLayerTitle = computed(
+  () =>
+    `${describeLinkLayer(appStore.decoded)}. ARP announcements add devices to the asset list; ` +
+    'LLDP and CDP are counted now and will drive switch discovery in a later release. ' +
+    'These frames carry no IP conversation, so they draw no links.',
+)
 
 function fileName(path: string): string {
   const sep = path.includes('\\') ? '\\' : '/'
@@ -63,10 +67,16 @@ function closeCapture() {
         {{ topologyStore.nodes.length }} devices
         <span class="mx-1.5 text-border-strong">·</span>
         {{ topologyStore.edges.length }} conversations
+        <template v-if="linkLayerCount > 0">
+          <span class="mx-1.5 text-border-strong">·</span>
+          <span :title="linkLayerTitle" class="cursor-help">
+            {{ linkLayerCount.toLocaleString() }} link-layer frames
+          </span>
+        </template>
         <template v-if="skippedTotal > 0">
           <span class="mx-1.5 text-border-strong">·</span>
           <span :title="skippedTitle" class="cursor-help underline decoration-dotted">
-            {{ skippedTotal.toLocaleString() }} packets not shown
+            {{ skippedTotal.toLocaleString() }} frames not decoded
           </span>
         </template>
       </span>

@@ -47,6 +47,15 @@ const familyMix = computed(() => {
   return [...byFamily.entries()].sort((a, b) => b[1] - a[1]).map(([family]) => family)
 })
 
+/** Distinct VLAN ids across the link's conversations, sorted. */
+const vlans = computed(() => {
+  const ids = new Set<number>()
+  for (const e of link.value?.edges ?? []) {
+    if (e.connection.vlan_id !== null) ids.add(e.connection.vlan_id)
+  }
+  return [...ids].sort((a, b) => a - b)
+})
+
 function endpointLabel(host: Host): string {
   return ROLE_LABELS[effectiveRole(host)]
 }
@@ -89,7 +98,7 @@ function close() {
             class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-bg-elevated"
             @click="openHost(link.source.host.id)"
           >
-            <span class="flex-1 font-mono text-text-primary">{{
+            <span class="flex-1 truncate font-mono text-text-primary">{{
               link.source.host.ip_address
             }}</span>
             <span class="text-xs text-text-muted">{{ endpointLabel(link.source.host) }}</span>
@@ -114,7 +123,7 @@ function close() {
             class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-bg-elevated"
             @click="openHost(link.target.host.id)"
           >
-            <span class="flex-1 font-mono text-text-primary">{{
+            <span class="flex-1 truncate font-mono text-text-primary">{{
               link.target.host.ip_address
             }}</span>
             <span class="text-xs text-text-muted">{{ endpointLabel(link.target.host) }}</span>
@@ -135,6 +144,9 @@ function close() {
           </DetailRow>
           <DetailRow label="Last seen">
             {{ formatTime(aggregate.lastSeen) }}
+          </DetailRow>
+          <DetailRow v-if="vlans.length" label="VLAN" mono>
+            {{ vlans.join(', ') }}
           </DetailRow>
           <div class="flex items-center justify-between gap-3 pt-0.5">
             <span class="text-text-secondary">Protocols</span>

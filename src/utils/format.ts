@@ -23,6 +23,17 @@ export function formatClock(ts: number): string {
   })
 }
 
+/** Node labels have about 130 px; a full IPv6 address does not fit. Keep the
+ *  first group and the last two so neighbours stay distinguishable — the
+ *  panels always show the full address. */
+export function shortAddress(ip: string): string {
+  if (!ip.includes(':') || ip.length <= 17) return ip
+  const groups = ip.split(':')
+  const first = groups[0] || '0'
+  const last = groups.slice(-2).join(':')
+  return `${first}:…:${last}`
+}
+
 export function formatCadence(ms: number): string {
   if (ms < 1000) return `${ms.toFixed(0)} ms`
   return `${(ms / 1000).toFixed(1)} s`

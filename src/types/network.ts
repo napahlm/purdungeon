@@ -26,6 +26,8 @@ export interface Host {
   role_override: Role | null
   level_override: number | null
   protocols: string
+  /** Comma-joined link-layer protocols the host was seen in (e.g. `arp`). */
+  link_protocols: string
   is_external: boolean
   first_seen: number
   last_seen: number
@@ -78,8 +80,11 @@ export interface Connection {
   dst_host_id: number
   src_port: number
   dst_port: number
+  /** IP protocol name: TCP, UDP, ICMP, ICMPv6, IGMP, VRRP, … */
   protocol: string
   app_protocol: string | null
+  /** 802.1Q VLAN id the conversation was seen on; null when untagged. */
+  vlan_id: number | null
   packet_count: number
   byte_count: number
   first_seen: number
@@ -106,6 +111,8 @@ export interface HostDetail {
   connections: HostConnection[]
   total_packets: number
   total_bytes: number
+  /** Distinct VLAN ids across the host's conversations, sorted. */
+  vlans: number[]
 }
 
 export interface ModbusFunctionStat {
@@ -159,17 +166,34 @@ export interface HistogramBucket {
   byte_count: number
 }
 
-/** Packets read but not imported, by reason. */
-export interface SkippedPackets {
+/** Frames that were decoded, by what they carried. ARP, LLDP and CDP add to
+ *  the packet count but carry no IP conversation. */
+export interface LinkLayerCounts {
+  ipv4: number
   ipv6: number
   arp: number
-  other: number
+  lldp: number
+  cdp: number
 }
 
+/** Frames read but not decoded, by reason. */
+export interface SkippedPackets {
+  unsupported_link_type: number
+  other_ethertype: number
+  fragment: number
+  truncated: number
+  malformed: number
+  no_timestamp: number
+}
+
+/** `frames_read === packet_count + sum(skipped)` and
+ *  `packet_count === sum(decoded)` always hold. */
 export interface ImportResult {
+  frames_read: number
+  packet_count: number
+  decoded: LinkLayerCounts
+  skipped: SkippedPackets
   host_count: number
   connection_count: number
-  packet_count: number
-  skipped: SkippedPackets
   time_range: [number, number]
 }

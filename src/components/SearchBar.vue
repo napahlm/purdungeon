@@ -79,7 +79,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown, true))
               ref="inputRef"
               v-model="query"
               type="text"
-              placeholder="IP, MAC, vendor, protocol (tcp, modbus), or subnet (10.0.0.0/24)…"
+              placeholder="IP, MAC, vendor, protocol (tcp, modbus), or subnet (10.0.0.0/24, fe80::/64)…"
               class="flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-muted"
             />
             <kbd class="rounded border border-border px-1.5 py-0.5 text-xs text-text-muted"
