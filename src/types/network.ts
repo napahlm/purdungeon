@@ -16,7 +16,9 @@ export type Role =
 export interface Host {
   id: number
   mac_address: string
-  ip_address: string
+  /** null for a device known only by its MAC (heard in LLDP/CDP/DHCP, never in IP traffic). */
+  ip_address: string | null
+  /** Best-evidenced name from DHCP, NetBIOS, mDNS, LLMNR, SNMP, LLDP or CDP. */
   hostname: string | null
   vendor: string | null
   role: Role
@@ -74,6 +76,11 @@ export function effectiveLevel(host: Host): number | null {
   return host.level_override ?? host.purdue_level
 }
 
+/** What to call a device: its address, else its name, else its MAC. */
+export function hostLabel(host: Host): string {
+  return host.ip_address ?? host.hostname ?? host.mac_address
+}
+
 export interface Connection {
   id: number
   src_host_id: number
@@ -106,6 +113,22 @@ export interface HostConnection {
   last_seen: number
 }
 
+/** One thing a protocol said about a device. Every identity claim traces
+ *  back to rows like this. */
+export interface Evidence {
+  id: number
+  host_id: number
+  kind: string
+  value: string
+  source_protocol: string
+  first_seen: number
+  last_seen: number
+  /** 0–1: how far the value can be trusted to describe this device. */
+  confidence: number
+  /** How many packets said so. */
+  count: number
+}
+
 export interface HostDetail {
   host: Host
   connections: HostConnection[]
@@ -113,6 +136,8 @@ export interface HostDetail {
   total_bytes: number
   /** Distinct VLAN ids across the host's conversations, sorted. */
   vlans: number[]
+  /** Everything the capture said about this device, by kind then confidence. */
+  evidence: Evidence[]
 }
 
 export interface ModbusFunctionStat {

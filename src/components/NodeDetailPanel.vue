@@ -3,7 +3,7 @@ import { ref, computed, watch } from 'vue'
 import { useTopologyStore } from '@/stores/topology'
 import { useTauri } from '@/composables/useTauri'
 import type { HostDetail, ModbusHostActivity, Role } from '@/types/network'
-import { ROLE_LABELS, ASSIGNABLE_ROLES, effectiveLevel } from '@/types/network'
+import { ROLE_LABELS, ASSIGNABLE_ROLES, effectiveLevel, hostLabel } from '@/types/network'
 import { levelColorFor } from '@/canvas/palette'
 import { formatBytes, formatTime } from '@/utils/format'
 import DetailPanel from './ui/DetailPanel.vue'
@@ -130,7 +130,7 @@ function close() {
           :style="{ backgroundColor: levelBadgeColor }"
         />
         <h2 class="truncate font-mono text-sm font-semibold text-text-primary">
-          {{ host?.ip_address ?? 'Device' }}
+          {{ host ? hostLabel(host) : 'Device' }}
         </h2>
       </div>
     </template>
@@ -173,6 +173,9 @@ function close() {
 
       <PanelSection label="Identity">
         <div class="space-y-1.5 text-sm">
+          <DetailRow v-if="host.hostname" label="Name" mono>
+            {{ host.hostname }}
+          </DetailRow>
           <DetailRow label="MAC" mono>
             {{ host.mac_address || '—' }}
           </DetailRow>
@@ -201,6 +204,24 @@ function close() {
             {{ detail.total_packets.toLocaleString() }} packets ·
             {{ formatBytes(detail.total_bytes) }}
           </DetailRow>
+        </div>
+      </PanelSection>
+
+      <PanelSection v-if="detail.evidence.length" :label="`Evidence (${detail.evidence.length})`">
+        <div class="space-y-1">
+          <div v-for="e in detail.evidence" :key="e.id" class="flex items-baseline gap-2 text-xs">
+            <span class="w-24 shrink-0 text-text-secondary">{{ e.kind }}</span>
+            <span class="min-w-0 flex-1 truncate font-mono text-text-primary" :title="e.value">
+              {{ e.value }}
+            </span>
+            <span class="shrink-0 tabular-nums text-text-muted">
+              {{ e.source_protocol }} · {{ Math.round(e.confidence * 100) }}%<template
+                v-if="e.count > 1"
+              >
+                · ×{{ e.count }}</template
+              >
+            </span>
+          </div>
         </div>
       </PanelSection>
 

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useTopologyStore } from '@/stores/topology'
-import { effectiveRole, ROLE_LABELS, type Host } from '@/types/network'
+import { effectiveRole, hostLabel, ROLE_LABELS, type Host } from '@/types/network'
 import { PROTO_FAMILY_LABELS, PROTO_COLORS, type ProtoFamily } from '@/canvas/palette'
 import { formatBytes, formatTime } from '@/utils/format'
 import DetailPanel from './ui/DetailPanel.vue'
@@ -99,7 +99,7 @@ function close() {
             @click="openHost(link.source.host.id)"
           >
             <span class="flex-1 truncate font-mono text-text-primary">{{
-              link.source.host.ip_address
+              hostLabel(link.source.host)
             }}</span>
             <span class="text-xs text-text-muted">{{ endpointLabel(link.source.host) }}</span>
           </button>
@@ -124,7 +124,7 @@ function close() {
             @click="openHost(link.target.host.id)"
           >
             <span class="flex-1 truncate font-mono text-text-primary">{{
-              link.target.host.ip_address
+              hostLabel(link.target.host)
             }}</span>
             <span class="text-xs text-text-muted">{{ endpointLabel(link.target.host) }}</span>
           </button>

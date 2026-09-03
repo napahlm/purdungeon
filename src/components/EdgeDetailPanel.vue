@@ -2,7 +2,7 @@
 import { ref, watch, computed } from 'vue'
 import { useTopologyStore } from '@/stores/topology'
 import { useTauri } from '@/composables/useTauri'
-import type { ModbusConversation } from '@/types/network'
+import { hostLabel, type ModbusConversation } from '@/types/network'
 import { formatBytes, formatTime, formatCadence } from '@/utils/format'
 import DetailPanel from './ui/DetailPanel.vue'
 import PanelSection from './ui/PanelSection.vue'
@@ -94,7 +94,7 @@ function openHost(hostId: number) {
             @click="openHost(srcHost.id)"
           >
             <span class="flex-1 truncate font-mono text-text-primary">{{
-              srcHost.ip_address
+              hostLabel(srcHost)
             }}</span>
             <span class="font-mono text-xs text-text-muted">:{{ connection.src_port }}</span>
           </button>
@@ -120,7 +120,7 @@ function openHost(hostId: number) {
             @click="openHost(dstHost.id)"
           >
             <span class="flex-1 truncate font-mono text-text-primary">{{
-              dstHost.ip_address
+              hostLabel(dstHost)
             }}</span>
             <span class="font-mono text-xs text-text-muted">:{{ connection.dst_port }}</span>
           </button>
