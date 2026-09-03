@@ -14,7 +14,10 @@ const RADIUS = 13
 function makeShape(node: CanvasNode): Konva.Shape {
   const common = {
     fill: node.color,
-    stroke: node.dashed ? node.color : undefined,
+    // A thin halo in the background colour separates a node from the links
+    // passing under it; external hosts keep their dashed outline instead.
+    stroke: node.dashed ? node.color : UI.bgPrimary,
+    strokeWidth: 1.5,
     dash: node.dashed ? [4, 3] : undefined,
     name: 'node-shape',
     // Skip Konva's buffer-canvas pass; these simple fills don't need it.

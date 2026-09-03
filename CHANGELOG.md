@@ -21,6 +21,10 @@ What changed in purdungeon, newest first, in plain language. The layout follows 
 - **Honest frame accounting.** The header now explains every frame that could not be decoded, by reason: unreadable link type, non-IP frame, IP fragment, cut by the snapshot length, unreadable, or without a timestamp. It also shows how many link-layer announcements were counted. The numbers always add up to the frames in the file.
 - **Tests you can trust:** golden-file tests against three public ICS captures and a synthetic one, a fetch-only corpus manifest with checksums (`just fetch-corpus`), a `cargo deny` licence policy that rejects anything copyleft, and a CI workflow that runs on Linux and Windows.
 
+### Fixed
+
+- **Every node and link is drawn again.** Tailwind v4 drops theme colours that no CSS class uses, and the canvas reads its colours from the stylesheet at start-up, so the level and protocol colours came back empty and Konva painted most nodes and every non-cross-zone link fully transparent. The theme is now emitted in full, a missing token falls back to grey with a console warning instead of to nothing, nodes get a thin halo against the links under them, and unnamed conversations are a little brighter.
+
 ### Changed
 
 - A client that has no address yet (`0.0.0.0`) is treated like a broadcast address and kept off the map; its DHCP facts go to the device itself.
