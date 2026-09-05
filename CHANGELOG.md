@@ -27,6 +27,7 @@ What changed in purdungeon, newest first, in plain language. The layout follows 
 
 ### Changed
 
+- **Loading is quick and honest.** The six-step loading animation, and the pause it forced on every file, are gone. Each capture gets one progress bar that follows the bytes actually read and then the analysis stages, with the stage named beside it. Dropping several files shows them as a list, so each one can be seen finishing, and a file that fails no longer stops the rest. Adding captures to an open session shows a small card over the view instead of the full-screen loading screen, and more files can be dropped onto it while it works.
 - A client that has no address yet (`0.0.0.0`) is treated like a broadcast address and kept off the map; its DHCP facts go to the device itself.
 - A capture whose writer was killed mid-packet now imports everything before the cut instead of failing outright; the stub is counted as unreadable.
 - Packet counts in the header and the sources list include ARP, LLDP and CDP frames, so they are higher than before for the same file.

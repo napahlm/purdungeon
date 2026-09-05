@@ -113,10 +113,8 @@ export function useTauri() {
 
   /** Fetch the (possibly merged) session and rebuild the topology from it. */
   async function refreshView(reset: boolean) {
-    const appStore = useAppStore()
     const topologyStore = useTopologyStore()
     const timelineStore = useTimelineStore()
-    appStore.setStage('building-view')
     const [hosts, connections, timeRange, findings, positions, histogram] = await Promise.all([
       getHosts(),
       getConnections(),
@@ -135,79 +133,78 @@ export function useTauri() {
     topologyStore.findings = findings
   }
 
-  type LoadOutcome = 'failed' | 'loaded' | 'refreshed'
+  /** One worker drains the import queue; a drop during a batch only adds to it. */
+  let workerRunning = false
 
-  /**
-   * Load a capture. `replace` starts a fresh session; `append` stitches the
-   * file into the current one. With `refresh` (the default) the graph is
-   * rebuilt afterwards; a multi-file batch turns it off for all but the last
-   * file so the view is built once, not once per file.
-   */
-  async function loadFile(
-    path: string,
-    mode: 'replace' | 'append' = 'replace',
-    fileIndex = 1,
-    fileCount = 1,
-    refresh = true,
-  ): Promise<LoadOutcome> {
+  async function runQueue() {
     const appStore = useAppStore()
+    if (workerRunning) return
+    workerRunning = true
+    const startedFresh = appStore.loadedFile === null
+    appStore.freshBatch = startedFresh
 
-    if (!isCaptureFile(path)) {
-      appStore.setError('That isn’t a capture file. Drop a .pcap or .pcapng instead.')
-      return 'failed'
-    }
-
-    appStore.startLoading(fileIndex, fileCount)
+    // The backend's events name no file; the worker never overlaps imports,
+    // so whatever is running is the target.
+    let running: number | null = null
     const unlistenProgress = await listen<{ bytes_done: number; bytes_total: number }>(
       'import-progress',
       (event) => {
-        if (event.payload.bytes_total > 0) {
-          appStore.importProgress = event.payload.bytes_done / event.payload.bytes_total
+        if (running !== null && event.payload.bytes_total > 0) {
+          appStore.setJobProgress(running, event.payload.bytes_done / event.payload.bytes_total)
         }
       },
     )
     const unlistenStage = await listen<ImportStage>('import-stage', (event) => {
-      appStore.setStage(event.payload)
+      if (running !== null) appStore.setJobStage(running, event.payload)
     })
-    let outcome: LoadOutcome = 'failed'
+
+    // The last file that loaded keeps its row "running" until the view is
+    // built, so the final stage reads honestly.
+    let pending: { id: number; packets: number } | null = null
+    let loadedAny = false
     try {
-      const result = mode === 'append' ? await addPcap(path) : await importPcap(path)
-      if (result.packet_count === 0) {
-        // On a fresh load that's an error; on an append it just means this file
-        // added nothing — leave the existing view in place.
-        if (mode === 'replace') {
-          appStore.setError(noTrafficMessage(result))
-        } else {
-          appStore.addSource(path, 0, result)
-          outcome = 'loaded'
+      for (;;) {
+        const job = appStore.jobs.find((j) => j.status === 'queued')
+        if (!job) break
+        if (pending) {
+          appStore.finishJob(pending.id, pending.packets)
+          pending = null
         }
-      } else {
-        if (mode === 'replace') appStore.setLoadedFile(path, result.packet_count, result)
-        else appStore.addSource(path, result.packet_count, result)
-        if (refresh) {
-          await refreshView(mode === 'replace')
-          outcome = 'refreshed'
-        } else {
-          outcome = 'loaded'
+        running = job.id
+        appStore.startJob(job.id)
+        // The first file into an empty session replaces; everything after
+        // stitches in. Decided per job, so a failed first file is not fatal.
+        const mode = appStore.loadedFile === null ? 'replace' : 'append'
+        try {
+          const result = mode === 'append' ? await addPcap(job.path) : await importPcap(job.path)
+          if (result.packet_count === 0 && mode === 'replace') {
+            appStore.failJob(job.id, noTrafficMessage(result))
+          } else {
+            if (mode === 'replace') appStore.setLoadedFile(job.path, result.packet_count, result)
+            else appStore.addSource(job.path, result.packet_count, result)
+            pending = { id: job.id, packets: result.packet_count }
+            loadedAny = true
+          }
+        } catch (e) {
+          appStore.failJob(job.id, humanizeError(e instanceof Error ? e.message : String(e)))
         }
+        running = null
       }
-    } catch (e) {
-      appStore.setError(humanizeError(e instanceof Error ? e.message : String(e)))
+      if (pending) appStore.setJobStage(pending.id, 'building-view')
+      if (loadedAny) await refreshView(startedFresh)
+      if (pending) appStore.finishJob(pending.id, pending.packets)
     } finally {
       unlistenProgress()
       unlistenStage()
+      appStore.freshBatch = false
+      workerRunning = false
     }
-    // Drain the step animation to the end (honouring each step's minimum screen
-    // time) before the overlay closes. On error the overlay stays for the ack.
-    if (outcome !== 'failed') await appStore.finishLoading()
-    return outcome
   }
 
   /**
-   * Load several captures in one gesture: the first replaces the session (or
-   * appends if one is already open), the rest stitch in, so the network grows
-   * file by file. Stops if a file fails. The view is rebuilt once at the end,
-   * not after every file.
+   * Queue captures for import. On an empty window the first one starts the
+   * session; over a loaded view they stitch in; during a running batch they
+   * join the queue. The view is rebuilt once when the queue drains.
    */
   async function loadFiles(paths: string[]) {
     const appStore = useAppStore()
@@ -216,20 +213,8 @@ export function useTauri() {
       appStore.setError('No capture files here. Drop a .pcap or .pcapng instead.')
       return
     }
-    const startingFresh = appStore.loadedFile === null
-    let loadedAny = false
-    let refreshed = false
-    for (let i = 0; i < captures.length; i++) {
-      const mode = i === 0 && startingFresh ? 'replace' : 'append'
-      const isLast = i === captures.length - 1
-      const outcome = await loadFile(captures[i], mode, i + 1, captures.length, isLast)
-      if (outcome !== 'failed') loadedAny = true
-      if (outcome === 'refreshed') refreshed = true
-      if (appStore.error) break
-    }
-    // A mid-batch failure or an empty last file can leave imported data
-    // unrendered — build the view for whatever did load.
-    if (loadedAny && !refreshed) await refreshView(startingFresh)
+    appStore.enqueue(captures)
+    await runQueue()
   }
 
   /** Open the native capture picker and load whatever the user selects. */
@@ -257,7 +242,6 @@ export function useTauri() {
     getModbusConversation,
     setRoleOverride,
     setLevelOverride,
-    loadFile,
     loadFiles,
     pickAndLoadFiles,
   }

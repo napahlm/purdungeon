@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { LinkLayerCounts, SkippedPackets } from '@/types/network'
 import { addDecoded, addSkipped, emptyDecoded, emptySkipped } from '@/utils/skipped'
@@ -22,15 +22,59 @@ export const IMPORT_STAGES: { id: ImportStage; label: string }[] = [
   { id: 'building-view', label: 'Building the view' },
 ]
 
-/** Minimum on-screen time for each import step, so every stage is briefly
- *  visible even when the backend blows through it. A slow stage shows for as
- *  long as it actually takes; this only sets the floor. */
-export const IMPORT_STEP_MIN_MS = 220
+export type ImportJobStatus = 'queued' | 'running' | 'done' | 'failed'
 
-/** How long the fully-checkmarked list lingers before the view opens. */
-const IMPORT_DONE_HOLD_MS = 450
+/** One capture in the import queue: a row with its own progress bar. */
+export interface ImportJob {
+  id: number
+  path: string
+  status: ImportJobStatus
+  /** Backend stage while running. */
+  stage: ImportStage | null
+  /** 0–1 through the file while reading packets. */
+  progress: number
+  /** Decoded frames once done. */
+  packets: number
+  /** Why it failed. */
+  message: string | null
+}
 
-const STAGE_COUNT = IMPORT_STAGES.length
+/** Share of a job's bar given to reading the file; the analysis stages split
+ *  the rest evenly, so the bar keeps moving through a big capture's analysis. */
+const READ_SHARE = 0.7
+
+export function jobBarWidth(job: ImportJob): number {
+  switch (job.status) {
+    case 'queued':
+      return 0
+    case 'done':
+    case 'failed':
+      return 100
+    case 'running': {
+      const index = job.stage ? IMPORT_STAGES.findIndex((s) => s.id === job.stage) : 0
+      if (index <= 0) return job.progress * READ_SHARE * 100
+      const analysisSteps = IMPORT_STAGES.length - 1
+      return (READ_SHARE + (1 - READ_SHARE) * (index / analysisSteps)) * 100
+    }
+  }
+}
+
+/** The short text beside a job's bar: stage while running, outcome after. */
+export function jobStatusText(job: ImportJob): string {
+  switch (job.status) {
+    case 'queued':
+      return 'Waiting'
+    case 'failed':
+      return job.message ?? 'Failed'
+    case 'done':
+      return job.packets > 0 ? `${job.packets.toLocaleString()} packets` : 'Nothing readable'
+    case 'running': {
+      const label = IMPORT_STAGES.find((s) => s.id === job.stage)?.label ?? 'Starting'
+      const reading = job.stage === null || job.stage === 'reading-packets'
+      return reading ? `${label} · ${Math.round(job.progress * 100)}%` : label
+    }
+  }
+}
 
 /** One capture that has been stitched into the current session. */
 export interface CaptureSource {
@@ -46,14 +90,12 @@ export interface ImportCounts {
 }
 
 export const useAppStore = defineStore('app', () => {
-  const loading = ref(false)
   const loadedFile = ref<string | null>(null)
   // Every capture merged into the session, in load order. The first is the
   // one `loadedFile` names; the rest were appended.
   const sources = ref<CaptureSource[]>([])
+  // A batch-level problem that produced no jobs (nothing droppable, say).
   const error = ref<string | null>(null)
-  const importProgress = ref(0) // 0.0 – 1.0, within the reading stage
-  const stage = ref<ImportStage | null>(null)
   const dragHovering = ref(false)
   // The findings panel's collapsed state lives here (not in the panel) so the
   // canvas can frame content into the actually-visible area.
@@ -64,87 +106,64 @@ export const useAppStore = defineStore('app', () => {
   const skipped = ref<SkippedPackets>(emptySkipped())
   const decoded = ref<LinkLayerCounts>(emptyDecoded())
   const framesRead = ref(0)
-  // Position of the file being imported within a multi-file batch (1-based),
-  // and the batch size — drives the "File 2 of 3" line.
-  const currentFile = ref(0)
-  const totalFiles = ref(0)
 
-  // Step pacing: `displayStage` is the index of the step currently shown as
-  // active. It advances toward the real backend stage (`targetStage`) at most
-  // one step per IMPORT_STEP_MIN_MS, so each step is on screen for at least
-  // that long. When work is done it climbs to STAGE_COUNT — one past the last
-  // step — so every item, including the last, ends with a checkmark.
-  const displayStage = ref(0)
-  let targetStage = 0
-  let workDone = false
-  let ticker: ReturnType<typeof setInterval> | null = null
-  let holdTimer: ReturnType<typeof setTimeout> | null = null
-  let drainResolve: (() => void) | null = null
+  // The import queue. Each dropped file is a job with its own bar; one worker
+  // (useTauri.loadFiles) drains the queue in order, so at most one job runs.
+  const jobs = ref<ImportJob[]>([])
+  let nextJobId = 1
+  // True while a batch that started on an empty window is still running, so
+  // the full-screen overlay stays up until the whole batch has landed.
+  const freshBatch = ref(false)
 
-  function clearTimers() {
-    if (ticker !== null) {
-      clearInterval(ticker)
-      ticker = null
-    }
-    if (holdTimer !== null) {
-      clearTimeout(holdTimer)
-      holdTimer = null
-    }
-  }
+  const loading = computed(() =>
+    jobs.value.some((j) => j.status === 'queued' || j.status === 'running'),
+  )
 
-  function finishDrain() {
-    loading.value = false
-    const resolve = drainResolve
-    drainResolve = null
-    resolve?.()
-  }
-
-  function tick() {
-    if (displayStage.value < targetStage) displayStage.value++
-    // Reached the end with every step checkmarked: hold the completed list a
-    // moment, then open the view.
-    if (workDone && displayStage.value >= STAGE_COUNT && holdTimer === null) {
-      if (ticker !== null) {
-        clearInterval(ticker)
-        ticker = null
-      }
-      holdTimer = setTimeout(finishDrain, IMPORT_DONE_HOLD_MS)
-    }
-  }
-
-  /** Begin importing one file of a batch. */
-  function startLoading(fileIndex: number, fileCount: number) {
-    loading.value = true
-    currentFile.value = fileIndex
-    totalFiles.value = fileCount
-    importProgress.value = 0
-    stage.value = null
+  function enqueue(paths: string[]): ImportJob[] {
+    const created: ImportJob[] = paths.map((path) => ({
+      id: nextJobId++,
+      path,
+      status: 'queued',
+      stage: null,
+      progress: 0,
+      packets: 0,
+      message: null,
+    }))
+    jobs.value = [...jobs.value, ...created]
     error.value = null
-    displayStage.value = 0
-    targetStage = 0
-    workDone = false
-    clearTimers()
-    ticker = setInterval(tick, IMPORT_STEP_MIN_MS)
+    return created
   }
 
-  /** Mark the work complete and resolve once the stepper has drained to the
-   *  end (all checkmarks) and the brief completed-state hold has elapsed. */
-  function finishLoading(): Promise<void> {
-    workDone = true
-    targetStage = STAGE_COUNT
-    if (!loading.value) {
-      clearTimers()
-      return Promise.resolve()
-    }
-    return new Promise((resolve) => {
-      drainResolve = resolve
-    })
+  function updateJob(id: number, patch: Partial<ImportJob>) {
+    jobs.value = jobs.value.map((j) => (j.id === id ? { ...j, ...patch } : j))
   }
 
-  function setStage(value: ImportStage) {
-    stage.value = value
-    const i = IMPORT_STAGES.findIndex((s) => s.id === value)
-    if (i > targetStage) targetStage = i
+  function startJob(id: number) {
+    updateJob(id, { status: 'running', stage: 'reading-packets', progress: 0 })
+  }
+
+  function setJobProgress(id: number, fraction: number) {
+    updateJob(id, { progress: Math.max(0, Math.min(1, fraction)) })
+  }
+
+  function setJobStage(id: number, stage: ImportStage) {
+    // Past the reading stage the file has been read in full.
+    const patch: Partial<ImportJob> = { status: 'running', stage }
+    if (stage !== 'reading-packets') patch.progress = 1
+    updateJob(id, patch)
+  }
+
+  function finishJob(id: number, packets: number) {
+    updateJob(id, { status: 'done', stage: null, progress: 1, packets })
+  }
+
+  function failJob(id: number, message: string) {
+    updateJob(id, { status: 'failed', stage: null, message })
+  }
+
+  /** Drop finished rows; anything still queued or running stays. */
+  function clearFinishedJobs() {
+    jobs.value = jobs.value.filter((j) => j.status === 'queued' || j.status === 'running')
   }
 
   /** A fresh capture replaces the session: it becomes the first source. */
@@ -169,12 +188,6 @@ export const useAppStore = defineStore('app', () => {
 
   function setError(message: string) {
     error.value = message
-    loading.value = false
-    stage.value = null
-    clearTimers()
-    const resolve = drainResolve
-    drainResolve = null
-    resolve?.()
   }
 
   function clearError() {
@@ -182,8 +195,6 @@ export const useAppStore = defineStore('app', () => {
   }
 
   function reset() {
-    clearTimers()
-    loading.value = false
     loadedFile.value = null
     sources.value = []
     skipped.value = emptySkipped()
@@ -191,13 +202,8 @@ export const useAppStore = defineStore('app', () => {
     framesRead.value = 0
     findingsCollapsed.value = false
     error.value = null
-    importProgress.value = 0
-    stage.value = null
-    currentFile.value = 0
-    totalFiles.value = 0
-    displayStage.value = 0
-    targetStage = 0
-    workDone = false
+    jobs.value = []
+    freshBatch.value = false
   }
 
   return {
@@ -205,19 +211,20 @@ export const useAppStore = defineStore('app', () => {
     loadedFile,
     sources,
     error,
-    importProgress,
-    stage,
     dragHovering,
     findingsCollapsed,
     skipped,
     decoded,
     framesRead,
-    currentFile,
-    totalFiles,
-    displayStage,
-    startLoading,
-    finishLoading,
-    setStage,
+    jobs,
+    freshBatch,
+    enqueue,
+    startJob,
+    setJobProgress,
+    setJobStage,
+    finishJob,
+    failJob,
+    clearFinishedJobs,
     setLoadedFile,
     addSource,
     setError,
