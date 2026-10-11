@@ -197,6 +197,11 @@ export function useTauri() {
       unlistenProgress()
       unlistenStage()
       appStore.freshBatch = false
+      // The overlay covered a fresh batch from start to finish, so its finished
+      // rows need no card afterwards, unless one failed and has to be read.
+      if (startedFresh && !appStore.jobs.some((j) => j.status === 'failed')) {
+        appStore.clearFinishedJobs()
+      }
       workerRunning = false
     }
   }
