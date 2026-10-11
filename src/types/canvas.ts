@@ -7,7 +7,10 @@ export interface CanvasNode {
   y: number
   bandKey: string
   color: string
+  /** First label line: the address, else the name, else the MAC. */
   label: string
+  /** Second line: the name when the first line is an address, else the role. */
+  sublabel: string | null
   shape: 'circle' | 'square' | 'diamond'
   dashed: boolean
 }

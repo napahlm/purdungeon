@@ -1,7 +1,7 @@
 import { ref, computed, shallowRef } from 'vue'
 import { defineStore } from 'pinia'
 import type { Host, Connection, Finding } from '@/types/network'
-import { effectiveLevel, effectiveRole, hostLabel } from '@/types/network'
+import { effectiveLevel, effectiveRole, hostLabel, ROLE_LABELS } from '@/types/network'
 import type { CanvasNode, CanvasEdge, CanvasLink, BandLayout } from '@/types/canvas'
 import {
   BANDS,
@@ -17,8 +17,8 @@ import { parseCidr, ipInCidr, compareAddresses, TRANSPORT_TOKENS } from '@/utils
 import { shortAddress } from '@/utils/format'
 import { useTimelineStore } from './timeline'
 
-const BAND_HEIGHT = 220
-const NODE_SPACING = 130
+const BAND_HEIGHT = 200
+const NODE_SPACING = 120
 const BARYCENTER_SWEEPS = 4
 
 function nodeShape(host: Host): CanvasNode['shape'] {
@@ -26,6 +26,20 @@ function nodeShape(host: Host): CanvasNode['shape'] {
   if (role === 'plc' || role === 'field-device') return 'square'
   if (role === 'network-gear') return 'diamond'
   return 'circle'
+}
+
+const MAX_SUBLABEL = 18
+
+/** The second label line: the device's name when the first line is its
+ *  address, otherwise its role; nothing for a nameless device of unknown role. */
+function nodeSublabel(host: Host): string | null {
+  if (host.ip_address && host.hostname) {
+    const name = host.hostname
+    return name.length > MAX_SUBLABEL ? `${name.slice(0, MAX_SUBLABEL - 1)}…` : name
+  }
+  const role = effectiveRole(host)
+  if (role === 'unknown') return null
+  return role === 'engineering-workstation' ? 'Eng. workstation' : ROLE_LABELS[role]
 }
 
 /** Link thickness from the pair's total bytes: floored so a thin link stays
@@ -406,6 +420,7 @@ export const useTopologyStore = defineStore('topology', () => {
         bandKey,
         color: levelColor(host),
         label: host.ip_address ? shortAddress(host.ip_address) : hostLabel(host),
+        sublabel: nodeSublabel(host),
         shape: nodeShape(host),
         dashed: host.is_external,
       }
@@ -471,6 +486,7 @@ export const useTopologyStore = defineStore('topology', () => {
     node.host = updated
     node.color = levelColor(updated)
     node.shape = nodeShape(updated)
+    node.sublabel = nodeSublabel(updated)
 
     const newBand = bandKeyForHost(updated)
     if (newBand && newBand !== node.bandKey) {
