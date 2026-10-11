@@ -24,7 +24,7 @@ const appStore = useAppStore()
 const timelineStore = useTimelineStore()
 const { saveNodePosition } = useTauri()
 
-// Filters or the time window can hide the whole graph — say so instead of
+// Filters or the time window can hide the whole graph - say so instead of
 // showing an unexplained blank canvas.
 const allHidden = computed(() => topology.nodes.length > 0 && topology.filteredNodes.length === 0)
 
@@ -122,7 +122,7 @@ const nodeCallbacks = {
     updateLinksFor(hostId)
   },
   onDragEnd(hostId: number, x: number, y: number) {
-    // Position saving is a convenience, not critical state — don't interrupt
+    // Position saving is a convenience, not critical state - don't interrupt
     // the user over it, but leave a trace for debugging.
     saveNodePosition(hostId, x, y).catch((e) => console.warn('failed to save node position', e))
   },
@@ -134,7 +134,7 @@ const nodeCallbacks = {
 /**
  * Reconcile the Konva scene with the store: create what's new, keep what
  * stayed, destroy what's gone. Filter and timeline changes touch only the
- * delta — never a full teardown, which made scrubbing unusable.
+ * delta - never a full teardown, which made scrubbing unusable.
  */
 function syncGraph() {
   const layer = mainLayer.value
@@ -270,11 +270,11 @@ function fitView() {
 
 // Which layout generation the scene currently shows. Lets the graph watcher
 // stand down when a fresh import is about to trigger the layoutVersion
-// watcher anyway — without this, every import rendered twice.
+// watcher anyway - without this, every import rendered twice.
 let renderedVersion = 0
 
 // The canvas mounts after the capture is imported (v-if in App.vue), so the
-// store is already populated and no watcher fires for that initial state —
+// store is already populated and no watcher fires for that initial state -
 // draw it now. useCanvas registered its onMounted first, so the stage exists.
 onMounted(() => {
   renderedVersion = topology.layoutVersion
@@ -309,7 +309,7 @@ watch(
   () => fitView(),
 )
 
-// Zoomed far out, labels become noise — toggle them with the zoom level.
+// Zoomed far out, labels become noise - toggle them with the zoom level.
 watch(scale, (s) => {
   const show = s >= LABEL_MIN_SCALE
   if (show === labelsVisible) return
@@ -344,7 +344,7 @@ watch(stage, (s) => {
 <template>
   <!-- min-w-0: the Konva stage sets a fixed pixel width on its content div,
        which would otherwise act as a min-width and stop this flex item from
-       shrinking when a detail panel opens — pushing the panel out of view. -->
+       shrinking when a detail panel opens - pushing the panel out of view. -->
   <div class="relative h-full min-w-0 flex-1 overflow-hidden">
     <div ref="containerRef" class="h-full w-full bg-bg-primary" />
 
@@ -417,7 +417,7 @@ watch(stage, (s) => {
           }}
         </p>
         <p class="max-w-60 text-xs text-text-muted">
-          The capture is still loaded — the current filters just hide all of it.
+          The capture is still loaded - the current filters just hide all of it.
         </p>
         <button
           class="rounded-md bg-bg-elevated px-3 py-1.5 text-xs text-text-primary transition-colors hover:bg-border"

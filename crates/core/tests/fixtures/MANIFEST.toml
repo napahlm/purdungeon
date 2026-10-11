@@ -3,7 +3,7 @@
 # Each file is small enough to live in git. Its sha256 is asserted by the
 # tests, so a line-ending conversion or a silent replacement fails loudly.
 # The golden snapshots in tests/golden/ legitimately change when oui.toml or
-# analysis/ports.rs change — regenerate with `just golden-update` and review
+# analysis/ports.rs change - regenerate with `just golden-update` and review
 # the diff.
 #
 # All three come from CISA's ICSNPP Zeek analyzer packages (BSD-3-Clause,
@@ -24,7 +24,7 @@ file = "icsnpp-s7comm-plus.pcap"
 source = "https://github.com/cisagov/icsnpp-s7comm/blob/7ebeb03a0f954541369361651d1c27d09a64b5a3/testing/traces/s7comm_plus.pcap"
 licence = "BSD-3-Clause"
 sha256 = "2f9befe0667443fb86b7184b6ff7fcc4eb61fae67d3ce30793ce7b2937067b0c"
-notes = "S7comm-plus session on port 102 in a Linux cooked (SLL) capture — no destination MACs"
+notes = "S7comm-plus session on port 102 in a Linux cooked (SLL) capture - no destination MACs"
 
 [[fixture]]
 name = "icsnpp-profinet-mixed"

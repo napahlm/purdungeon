@@ -31,7 +31,7 @@ export interface ImportJob {
   status: ImportJobStatus
   /** Backend stage while running. */
   stage: ImportStage | null
-  /** 0–1 through the file while reading packets. */
+  /** 0-1 through the file while reading packets. */
   progress: number
   /** Decoded frames once done. */
   packets: number

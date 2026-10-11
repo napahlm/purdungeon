@@ -1,6 +1,6 @@
 //! Capture ingest: stream a pcap/pcapng file, decode every frame, and fold
 //! hosts, flows, packets and identity evidence into the session database.
-//! Nothing is dropped silently — every record ends up in `ImportResult`
+//! Nothing is dropped silently - every record ends up in `ImportResult`
 //! either as decoded or as a counted reason for skipping, and the two always
 //! add up to the frames read.
 
@@ -25,8 +25,8 @@ use crate::store::{queries, schema};
 use crate::types::{ImportResult, LinkLayerCounts, SkippedPackets};
 use crate::CoreError;
 
-/// The reader buffer must hold one complete block — a full-snaplen (65535 B)
-/// packet plus block framing — or parsing aborts with a buffer-too-small
+/// The reader buffer must hold one complete block - a full-snaplen (65535 B)
+/// packet plus block framing - or parsing aborts with a buffer-too-small
 /// error. 1 MB also leaves room for jumbo frames.
 const READER_BUFFER_SIZE: usize = 1 << 20;
 
@@ -93,8 +93,8 @@ fn is_pseudo_host(ip: IpAddr) -> bool {
 }
 
 /// Where a MAC address for a host was learned, and how much that is worth.
-/// A frame's source MAC is the last hop's — a router's for anything beyond
-/// the local segment — whereas ARP, DHCP and LLDP/CDP name the device's own.
+/// A frame's source MAC is the last hop's - a router's for anything beyond
+/// the local segment - whereas ARP, DHCP and LLDP/CDP name the device's own.
 #[derive(Clone, Copy)]
 enum MacSource {
     Frame,
@@ -156,7 +156,7 @@ impl HostAgg {
     }
 }
 
-/// Per-flow aggregate, same idea. `packets`/`bytes` count only this parse —
+/// Per-flow aggregate, same idea. `packets`/`bytes` count only this parse -
 /// the flush adds them to whatever the row already holds, so appends compose.
 struct FlowAgg {
     id: i64,
@@ -211,7 +211,7 @@ impl IngestState {
 fn unsupported_linktype_error(linktype: &str) -> CoreError {
     CoreError::Parse(format!(
         "this capture uses link type {linktype}; purdungeon reads Ethernet, \
-         Linux cooked (tcpdump -i any), raw IP and loopback captures — convert \
+         Linux cooked (tcpdump -i any), raw IP and loopback captures - convert \
          it with Wireshark or editcap, or re-capture on an Ethernet interface"
     ))
 }
@@ -235,7 +235,7 @@ fn ingest(
     let is_pcapng = u32::from_le_bytes(magic) == 0x0A0D_0D0A;
 
     // One transaction covers everything, the destructive prep included, so a
-    // failed parse leaves the previous session exactly as it was — dropping
+    // failed parse leaves the previous session exactly as it was - dropping
     // the transaction rolls back.
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Exclusive)?;
 
@@ -301,7 +301,7 @@ fn ingest(
 }
 
 /// Addresses are only ever written by `IpAddr::to_string`, so a stored row
-/// that fails to parse means the session is corrupt — better to say so than
+/// that fails to parse means the session is corrupt - better to say so than
 /// to skip it and hit the UNIQUE constraint on the next insert.
 fn parse_stored_ip(text: &str) -> Result<IpAddr, CoreError> {
     text.parse().map_err(|_| {
@@ -319,7 +319,7 @@ fn parse_mac(text: &str) -> Option<[u8; 6]> {
 }
 
 /// Rebuild the host and flow caches from the session so an append reuses
-/// existing ids. Aggregates start empty — the flush only adds what this
+/// existing ids. Aggregates start empty - the flush only adds what this
 /// parse contributes on top of the stored rows.
 fn preload_caches(conn: &rusqlite::Connection, state: &mut IngestState) -> Result<(), CoreError> {
     let mut stmt = conn.prepare("SELECT id, ip_address, mac_address, link_protocols FROM hosts")?;
@@ -652,7 +652,7 @@ fn parse_legacy_data<R: Read>(
 }
 
 /// Decode one capture record and fold it into the session. `orig_len` is the
-/// packet's length on the wire — captures taken with a snaplen truncate
+/// packet's length on the wire - captures taken with a snaplen truncate
 /// `data`, and byte counts must reflect the wire, not the truncation.
 fn process_frame(
     data: &[u8],
@@ -1008,7 +1008,7 @@ fn upsert_connection(
         agg.first_seen = agg.first_seen.min(timestamp);
         agg.last_seen = agg.last_seen.max(timestamp);
         // A TCP flow opens with an empty SYN, so the app protocol is only
-        // recognizable once payload arrives — tag the flow late.
+        // recognizable once payload arrives - tag the flow late.
         if !agg.tagged {
             if let Some(tag) = app_protocol {
                 agg.late_tag = Some(tag);
@@ -1088,7 +1088,7 @@ fn insert_modbus_events(
 }
 
 /// Return the host's id, inserting it on first sight. The MAC string, vendor
-/// lookup, and IP formatting only happen on that first sight — never in the
+/// lookup, and IP formatting only happen on that first sight - never in the
 /// per-packet hot path. `link` flags which link-layer protocol (if any) this
 /// sighting came from; `mac` and its source become `mac` evidence, from
 /// which the analysis stage picks the device's own address.
@@ -1112,7 +1112,7 @@ fn upsert_host(
         agg.touch(timestamp, link);
         agg
     } else {
-        // `IpAddr::to_string` is the one and only address formatter — IPv6
+        // `IpAddr::to_string` is the one and only address formatter - IPv6
         // comes out in its canonical compressed form, so the same address
         // always maps to the same row.
         let ip_str = ip.to_string();

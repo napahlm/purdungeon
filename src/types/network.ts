@@ -123,7 +123,7 @@ export interface Evidence {
   source_protocol: string
   first_seen: number
   last_seen: number
-  /** 0–1: how far the value can be trusted to describe this device. */
+  /** 0-1: how far the value can be trusted to describe this device. */
   confidence: number
   /** How many packets said so. */
   count: number

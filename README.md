@@ -5,9 +5,9 @@ Offline desktop tool for OT/ICS network analysis. Drop a packet capture on the w
 ## What it does
 
 1. Drag a `.pcap` / `.pcapng` onto the window (or use the file picker). Parsing runs off the main thread with honest progress stages.
-2. The Rust core reads pcap and pcapng (microsecond and nanosecond timestamps, snaplen-truncated, multi-section and cut-off files included) from Ethernet, VLAN-tagged, Linux cooked (`tcpdump -i any`), raw-IP and loopback captures. It decodes IPv4, IPv6 and ARP — an ARP announcement alone is enough to put a device on the map — recognises LLDP and CDP, parses Modbus TCP down to function codes, unit IDs, and coil/register accesses, and names other protocols by port. Every frame it cannot decode is counted by reason and shown in the header rather than silently dropped.
-3. It listens to what devices say about themselves — DHCP, NetBIOS, mDNS, LLMNR, SNMP, LLDP and CDP — and keeps every such fact as evidence: device, kind, value, source protocol, confidence, how often. Names, MAC addresses and switches that only ever announce themselves come from here.
-4. Discovery infers a role for every host — PLC, SCADA/master, HMI, engineering workstation, historian, network gear, … — from its traffic first and its evidence second, each as a best guess with confidence and a quoted reason, plus a Purdue level. Both are overridable in the UI.
+2. The Rust core reads pcap and pcapng (microsecond and nanosecond timestamps, snaplen-truncated, multi-section and cut-off files included) from Ethernet, VLAN-tagged, Linux cooked (`tcpdump -i any`), raw-IP and loopback captures. It decodes IPv4, IPv6 and ARP - an ARP announcement alone is enough to put a device on the map - recognises LLDP and CDP, parses Modbus TCP down to function codes, unit IDs, and coil/register accesses, and names other protocols by port. Every frame it cannot decode is counted by reason and shown in the header rather than silently dropped.
+3. It listens to what devices say about themselves - DHCP, NetBIOS, mDNS, LLMNR, SNMP, LLDP and CDP - and keeps every such fact as evidence: device, kind, value, source protocol, confidence, how often. Names, MAC addresses and switches that only ever announce themselves come from here.
+4. Discovery infers a role for every host - PLC, SCADA/master, HMI, engineering workstation, historian, network gear, … - from its traffic first and its evidence second, each as a best guess with confidence and a quoted reason, plus a Purdue level. Both are overridable in the UI.
 5. The network renders as a **Purdue-layered topology**: assets in horizontal bands by level (process at the bottom, enterprise at the top), node color = level, node shape = role, edge color = protocol, edge width = volume. Conversations that skip a level or cross the control/IT boundary are highlighted.
 6. A findings list surfaces what a consultant checks first: cross-zone conduits, who writes to controllers, external addresses on OT segments, scan-like behavior, cleartext control protocols. Each finding highlights the relevant nodes and edges on click.
 7. Click any node or edge for detail: identity, classification, the evidence behind both, per-register read/write activity, function code breakdown, polling cadence.
@@ -16,7 +16,7 @@ Everything stays on your machine; nothing leaves the process. OUI vendor lookup 
 
 ## Architecture
 
-The analysis core is a headless Rust crate with no UI dependencies — the desktop app is a thin Tauri shell over it, so the core can be reused from a CLI or tested directly.
+The analysis core is a headless Rust crate with no UI dependencies - the desktop app is a thin Tauri shell over it, so the core can be reused from a CLI or tested directly.
 
 ```
 crates/core/           Headless analysis core (Rust)
@@ -69,7 +69,7 @@ pnpm dev
 
 ## Tests and fixtures
 
-`cargo test -p purdungeon-core` runs unit tests, end-to-end imports of synthetic captures that exercise every frame type the reader handles, and golden-file tests. A golden test imports a fixed capture, summarises what the core made of it (frame accounting, devices, conversations by protocol, VLANs) and compares that summary with a committed JSON snapshot under `crates/core/tests/golden/`. Three small public captures live in `crates/core/tests/fixtures/` with their checksums; larger ones are fetch-only, listed in `crates/core/tests/corpus/manifest.toml` and checked with `just golden-corpus` once downloaded. When a change intentionally alters what the core reports, `just golden-update` rewrites the snapshots — review the diff, it is the behaviour change.
+`cargo test -p purdungeon-core` runs unit tests, end-to-end imports of synthetic captures that exercise every frame type the reader handles, and golden-file tests. A golden test imports a fixed capture, summarises what the core made of it (frame accounting, devices, conversations by protocol, VLANs) and compares that summary with a committed JSON snapshot under `crates/core/tests/golden/`. Three small public captures live in `crates/core/tests/fixtures/` with their checksums; larger ones are fetch-only, listed in `crates/core/tests/corpus/manifest.toml` and checked with `just golden-corpus` once downloaded. When a change intentionally alters what the core reports, `just golden-update` rewrites the snapshots - review the diff, it is the behaviour change.
 
 ## License
 

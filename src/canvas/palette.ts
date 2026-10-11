@@ -6,7 +6,7 @@ export type ProtoFamily = 'modbus' | 'ot' | 'it' | 'other'
 
 /**
  * Populated from the CSS design tokens by `initTokens()` before the app
- * mounts — style.css is the single source of color truth; nothing here
+ * mounts - style.css is the single source of color truth; nothing here
  * hard-codes a hex value.
  */
 export const LEVEL_COLORS: Record<LevelKey, string> = {
@@ -94,7 +94,7 @@ export function bandKeyForHost(host: Host): string | null {
 
 /**
  * A conversation is a cross-zone conduit when it skips a Purdue level or
- * crosses the control/IT boundary between levels 2 and 3 — the flows a
+ * crosses the control/IT boundary between levels 2 and 3 - the flows a
  * consultant looks at first.
  */
 export function isCrossZone(a: number | null, b: number | null): boolean {

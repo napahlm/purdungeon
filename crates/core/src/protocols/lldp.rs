@@ -10,7 +10,7 @@ pub const ETHERTYPE_LLDP: u16 = 0x88CC;
 
 /// IEEE 802.1AB-2016 §7.1, Table 7-1: the nearest-bridge, nearest
 /// non-TPMR-bridge and nearest-customer-bridge group addresses. Listed for
-/// reference only — some agents use other group addresses, so the ethertype
+/// reference only - some agents use other group addresses, so the ethertype
 /// plus the first-TLV check below is what we trust.
 pub const LLDP_GROUP_ADDRESSES: [[u8; 6]; 3] = [
     [0x01, 0x80, 0xC2, 0x00, 0x00, 0x0E],

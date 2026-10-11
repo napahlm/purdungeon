@@ -6,7 +6,7 @@ const RADIUS = 13
 
 /**
  * The visual for one device. Groups are centered on the node's position with
- * the shape child named 'node-shape' — future pixel-art sprites swap in here
+ * the shape child named 'node-shape' - future pixel-art sprites swap in here
  * as a `Konva.Image` with `offsetX/Y` at half its size, keeping the same
  * centered-origin contract; the ring, label, drag, and hit behavior on the
  * parent group stay untouched.

@@ -1,5 +1,5 @@
 //! SNMP v1/v2c responses: the MIB-II system group (RFC 3418) is the closest
-//! thing to a device introducing itself — description, name, object id
+//! thing to a device introducing itself - description, name, object id
 //! (which names the vendor), location, contact. The BER decoding is done by
 //! the `snmp-parser` crate (MIT/Apache-2.0); this module only picks fields.
 

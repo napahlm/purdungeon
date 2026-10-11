@@ -1,5 +1,5 @@
 //! Builders for the identity protocols: DHCP, `NetBIOS` name service, mDNS,
-//! LLMNR, SNMP responses, and full LLDP/CDP announcements — plus the
+//! LLMNR, SNMP responses, and full LLDP/CDP announcements - plus the
 //! scenario capture that exercises them all.
 
 use super::*;

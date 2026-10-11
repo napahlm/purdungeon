@@ -22,7 +22,7 @@ const edge = computed(() => {
 })
 
 // Selections from the node panel or a finding can point at conversations that
-// have no canvas edge (broadcast/multicast peers, self-loops) — fall back to
+// have no canvas edge (broadcast/multicast peers, self-loops) - fall back to
 // the raw capture data so the panel never opens empty.
 const connection = computed(() => {
   if (topology.selectedEdgeId === null) return null

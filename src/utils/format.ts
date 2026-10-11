@@ -9,13 +9,13 @@ export function formatBytes(bytes: number): string {
 
 /** Full date + time, for the detail panels. */
 export function formatTime(ts: number): string {
-  if (ts <= 0) return '—'
+  if (ts <= 0) return '-'
   return new Date(ts * 1000).toLocaleString()
 }
 
 /** Time of day only, for the timeline where the date would be noise. */
 export function formatClock(ts: number): string {
-  if (ts <= 0) return '—'
+  if (ts <= 0) return '-'
   return new Date(ts * 1000).toLocaleTimeString([], {
     hour: '2-digit',
     minute: '2-digit',
@@ -24,7 +24,7 @@ export function formatClock(ts: number): string {
 }
 
 /** Node labels have about 130 px; a full IPv6 address does not fit. Keep the
- *  first group and the last two so neighbours stay distinguishable — the
+ *  first group and the last two so neighbours stay distinguishable - the
  *  panels always show the full address. */
 export function shortAddress(ip: string): string {
   if (!ip.includes(':') || ip.length <= 17) return ip

@@ -1,5 +1,5 @@
 //! Headless analysis core: pcap ingest, protocol parsing, and asset discovery.
-//! No UI dependencies — the Tauri shell (or a CLI) drives it through `Session`.
+//! No UI dependencies - the Tauri shell (or a CLI) drives it through `Session`.
 
 pub mod analysis;
 pub mod error;
@@ -52,7 +52,7 @@ impl Session {
                 },
                 result,
             )),
-            // No Session was constructed, so its Drop won't run — remove the
+            // No Session was constructed, so its Drop won't run - remove the
             // temp database here instead of leaking it.
             Err(e) => {
                 drop(conn);
@@ -65,7 +65,7 @@ impl Session {
     /// Merge another capture into this session: parse it into the existing
     /// database without clearing, then re-run the analysis pass over the whole
     /// merged dataset so roles, levels, and findings reflect every file. User
-    /// role/level overrides are preserved — re-inference only writes the
+    /// role/level overrides are preserved - re-inference only writes the
     /// inferred columns.
     pub fn add_capture(
         &self,

@@ -7,7 +7,7 @@ import { FINDINGS_PANEL_WIDTH, FINDINGS_RAIL_WIDTH } from '@/ui/layout'
 
 const topology = useTopologyStore()
 
-// Open by default — it's the first thing to skim — but collapsible so it isn't
+// Open by default - it's the first thing to skim - but collapsible so it isn't
 // permanently in the way once you've read it. Lives in the app store so the
 // canvas can frame content into the space that's actually visible.
 const { findingsCollapsed: collapsed } = storeToRefs(useAppStore())

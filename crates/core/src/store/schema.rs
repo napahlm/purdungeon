@@ -9,7 +9,7 @@ pub fn init_db() -> Result<(Connection, PathBuf), CoreError> {
     let conn = Connection::open(&db_path)?;
 
     // The database is a disposable per-session temp file, so durability
-    // doesn't matter — but ROLLBACK must still work for failed imports, which
+    // doesn't matter - but ROLLBACK must still work for failed imports, which
     // rules out journal_mode=OFF. MEMORY keeps the journal in RAM.
     conn.execute_batch("PRAGMA journal_mode=MEMORY;")?;
     conn.execute_batch("PRAGMA synchronous=OFF;")?;

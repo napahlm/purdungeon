@@ -1,5 +1,5 @@
 //! Port-based application protocol classification for flows that were not
-//! identified by deep parsing. A port match is a guess, but a useful one —
+//! identified by deep parsing. A port match is a guess, but a useful one -
 //! the UI treats these the same as parsed protocols for coloring/filtering.
 
 use rusqlite::{params, Connection};

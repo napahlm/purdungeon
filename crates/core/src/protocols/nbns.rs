@@ -1,7 +1,7 @@
 //! `NetBIOS` Name Service (RFC 1001/1002) on UDP 137: the names Windows
 //! machines register and answer for. The packet layout is DNS with a
-//! "first-level encoded" name — 16 name bytes spread over 32 characters
-//! `A`–`P` (RFC 1001 §14.1) — where byte 16 is the name's suffix (service
+//! "first-level encoded" name - 16 name bytes spread over 32 characters
+//! `A`-`P` (RFC 1001 §14.1) - where byte 16 is the name's suffix (service
 //! type) and the rest is space-padded.
 
 use crate::protocols::dns::{self, RData};
@@ -37,9 +37,9 @@ pub struct NbName {
 pub struct NbnsMessage {
     pub is_response: bool,
     pub opcode: u8,
-    /// Names the sender registers or refreshes — its own names.
+    /// Names the sender registers or refreshes - its own names.
     pub claimed: Vec<NbName>,
-    /// Names the sender answers positive queries for — also its own.
+    /// Names the sender answers positive queries for - also its own.
     pub answered: Vec<NbName>,
 }
 

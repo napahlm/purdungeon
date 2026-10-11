@@ -174,7 +174,7 @@ fn assert_hash(path: &Path, expected: &str) {
     assert_eq!(
         actual,
         expected,
-        "{} does not match its manifest sha256 — was it modified or line-ending converted?",
+        "{} does not match its manifest sha256 - was it modified or line-ending converted?",
         path.display()
     );
 }
@@ -270,7 +270,7 @@ struct CorpusEntry {
 
 /// Large public captures are not committed; `just fetch-corpus` downloads
 /// them. Ignored by default because importing hundreds of megabytes in a
-/// debug build takes minutes — run with `just golden-corpus`.
+/// debug build takes minutes - run with `just golden-corpus`.
 #[test]
 #[ignore = "needs the fetched corpus; run `just golden-corpus`"]
 fn golden_corpus() {

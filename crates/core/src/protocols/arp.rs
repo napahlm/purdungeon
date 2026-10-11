@@ -1,6 +1,6 @@
 //! ARP (RFC 826): which devices an ARP packet vouches for.
 //!
-//! ARP is the cheapest asset source there is — every IPv4 device on a segment
+//! ARP is the cheapest asset source there is - every IPv4 device on a segment
 //! announces its own address/MAC pair whether or not it ever sends IP traffic
 //! the capture point can see.
 
@@ -17,7 +17,7 @@ pub struct ArpInfo {
 }
 
 /// `None` unless the packet maps 6-byte Ethernet addresses to 4-byte IPv4
-/// addresses (hardware type 1, protocol type 0x0800 — RFC 826). Other
+/// addresses (hardware type 1, protocol type 0x0800 - RFC 826). Other
 /// combinations exist (token ring, IPX) but never on the networks we care
 /// about, and reading them as Ethernet/IPv4 would invent hosts.
 #[must_use]
@@ -40,7 +40,7 @@ pub fn from_slice(arp: &ArpPacketSlice<'_>) -> Option<ArpInfo> {
 
 /// The hosts this packet is evidence for.
 ///
-/// The sender is always real — it is announcing itself — except for an ARP
+/// The sender is always real - it is announcing itself - except for an ARP
 /// probe, which uses 0.0.0.0 while the sender is still deciding on an
 /// address (RFC 5227 §2.1.1). The target of a *request* is a question, not a
 /// device, and must not become an asset; the target of a *reply* is the

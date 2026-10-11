@@ -31,7 +31,7 @@ const panelOpen = computed(
     topology.selectedLinkKey !== null,
 )
 
-// Floating controls sit beside the overlaying panels — one shared set of
+// Floating controls sit beside the overlaying panels - one shared set of
 // widths (ui/layout.ts) keeps them aligned as panels open and collapse.
 const filterBarLeft = computed(
   () => (appStore.findingsCollapsed ? FINDINGS_RAIL_WIDTH : FINDINGS_PANEL_WIDTH) + 12 + 'px',

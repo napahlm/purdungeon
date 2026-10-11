@@ -1,5 +1,5 @@
 //! Read commands over the loaded session. All of these are `async` so Tauri
-//! runs them off the main thread — a long-running query (or one waiting on
+//! runs them off the main thread - a long-running query (or one waiting on
 //! the session mutex during an import) must never freeze the window.
 
 use purdungeon_core::types::{
