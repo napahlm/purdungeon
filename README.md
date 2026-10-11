@@ -6,8 +6,6 @@ It is a modern, open-source take on [GrassMarlin](https://github.com/nsacyber/GR
 
 ![purdungeon showing three stitched sample captures as a Purdue-layered topology](docs/images/screenshot.png)
 
-![Opening the three sample captures from the start screen: they are read in a blink and the topology appears](docs/images/demo.gif)
-
 ## What it does
 
 1. **Reads captures.** pcap and pcapng (microsecond and nanosecond timestamps, snaplen-truncated, multi-section and cut-off files included) from Ethernet, VLAN-tagged, Linux cooked (`tcpdump -i any`), raw-IP and loopback captures.
