@@ -243,7 +243,7 @@ mod tests {
     fn truncated_frame_is_skipped() {
         let full = mbap(0x0001, 1, &[0x03, 0x00, 0x64, 0x00, 0x0A]);
         let frames = parse_frames(&full[..9], true);
-        assert!(frames.is_empty());
+        assert_eq!(frames, [] as [ModbusFrame; 0]);
     }
 
     #[test]

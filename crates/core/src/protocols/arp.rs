@@ -108,7 +108,7 @@ mod tests {
             (Ipv4Addr::UNSPECIFIED, MAC_A),
             (Ipv4Addr::new(10, 0, 0, 1), [0; 6]),
         );
-        assert!(hosts_from(&probe).is_empty());
+        assert_eq!(hosts_from(&probe), [] as [(Ipv4Addr, [u8; 6]); 0]);
         let gratuitous = info(
             true,
             (Ipv4Addr::new(10, 0, 0, 1), MAC_A),
