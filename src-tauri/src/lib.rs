@@ -8,6 +8,8 @@ pub struct AppState {
     // Arc so an async command can hand a clone to a blocking task while the
     // session lives on in shared state.
     pub session: Arc<Mutex<Option<Session>>>,
+    // Files the OS asked us to open before the window was ready to hear it.
+    pub opens: Mutex<commands::open::PendingOpens>,
 }
 
 impl AppState {
@@ -27,14 +29,17 @@ impl AppState {
 }
 
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
             session: Arc::new(Mutex::new(None)),
+            opens: Mutex::new(commands::open::PendingOpens::default()),
         })
         .invoke_handler(tauri::generate_handler![
             commands::import::import_pcap,
             commands::import::add_pcap,
+            commands::open::initial_captures,
+            commands::open::sample_captures,
             commands::query::get_hosts,
             commands::query::get_connections,
             commands::query::get_time_range,
@@ -48,6 +53,17 @@ pub fn run() {
             commands::query::get_modbus_conversation,
             commands::query::get_findings,
         ])
-        .run(tauri::generate_context!())
-        .expect("failed to run purdungeon");
+        .build(tauri::generate_context!())
+        .expect("failed to build purdungeon");
+
+    app.run(|app, event| {
+        // macOS hands double-clicked and "Open with" files over as an event
+        // rather than on the command line.
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        if let tauri::RunEvent::Opened { urls } = event {
+            commands::open::opened(app, &urls);
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+        let _ = (app, event);
+    });
 }

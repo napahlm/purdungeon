@@ -4,7 +4,7 @@ import { useTauri } from '@/composables/useTauri'
 import { useAppStore } from '@/stores/app'
 
 const appStore = useAppStore()
-const { pickAndLoadFiles } = useTauri()
+const { pickAndLoadFiles, loadSampleCaptures } = useTauri()
 
 // Drag-drop events are handled at the app root; this only mirrors the hover.
 // Loading and error feedback live in LoadingOverlay.
@@ -49,6 +49,16 @@ const hovering = computed(() => appStore.dragHovering)
           Choose files
         </button>
       </div>
+
+      <p class="text-xs text-text-muted">
+        No capture at hand?
+        <button
+          class="text-accent underline decoration-accent/40 underline-offset-2 transition-colors hover:text-text-primary"
+          @click="loadSampleCaptures"
+        >
+          Open the sample captures
+        </button>
+      </p>
     </div>
   </div>
 </template>

@@ -1,5 +1,5 @@
 //! Frame classification: turns an etherparse lax slice into the one fact the
-//! ingest sink needs — an IP packet with hosts and a flow, a link-layer
+//! ingest sink needs - an IP packet with hosts and a flow, a link-layer
 //! announcement worth counting, or something we count but do not read.
 //!
 //! Everything here reads etherparse's parsed structures; nothing indexes raw
@@ -79,7 +79,7 @@ pub(crate) struct Classified<'a> {
     pub frame: Frame<'a>,
 }
 
-/// `cut_by_snaplen` — the record's captured length is below its wire length,
+/// `cut_by_snaplen` - the record's captured length is below its wire length,
 /// which decides whether a missing header is truncation or corruption.
 pub(crate) fn classify<'a>(
     parsed: &LaxSlicedPacket<'a>,

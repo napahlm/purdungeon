@@ -31,8 +31,8 @@ const roleOptions = computed(() => {
   if (!host.value) return []
   const auto =
     host.value.role !== 'unknown'
-      ? `Auto — ${ROLE_LABELS[host.value.role]} (${Math.round(host.value.role_confidence * 100)}%)`
-      : `Auto — ${ROLE_LABELS[host.value.role]}`
+      ? `Auto - ${ROLE_LABELS[host.value.role]} (${Math.round(host.value.role_confidence * 100)}%)`
+      : `Auto - ${ROLE_LABELS[host.value.role]}`
   return [
     { value: 'auto', label: auto },
     ...ASSIGNABLE_ROLES.map((r) => ({ value: r, label: ROLE_LABELS[r] })),
@@ -42,7 +42,7 @@ const roleOptions = computed(() => {
 const levelOptions = computed(() => {
   if (!host.value) return []
   const auto =
-    host.value.purdue_level === null ? 'Auto — unplaced' : `Auto — Level ${host.value.purdue_level}`
+    host.value.purdue_level === null ? 'Auto - unplaced' : `Auto - Level ${host.value.purdue_level}`
   return [
     { value: 'auto', label: auto },
     ...[0, 1, 2, 3, 4, 5].map((l) => ({ value: String(l), label: `Level ${l}` })),
@@ -87,7 +87,7 @@ async function onRoleChange(value: string) {
   try {
     await setRoleOverride(host.value.id, role)
   } catch (err) {
-    // The session didn't record it — don't update the view as if it had.
+    // The session didn't record it - don't update the view as if it had.
     error.value = err instanceof Error ? err.message : String(err)
     return
   }
@@ -109,7 +109,7 @@ async function onLevelChange(value: string) {
 }
 
 function registerRange(start: number, quantity: number): string {
-  return quantity > 1 ? `${start}–${start + quantity - 1}` : String(start)
+  return quantity > 1 ? `${start}-${start + quantity - 1}` : String(start)
 }
 
 function openEdge(connectionId: number) {
@@ -177,10 +177,10 @@ function close() {
             {{ host.hostname }}
           </DetailRow>
           <DetailRow label="MAC" mono>
-            {{ host.mac_address || '—' }}
+            {{ host.mac_address || '-' }}
           </DetailRow>
           <DetailRow label="Vendor">
-            {{ host.vendor ?? '—' }}
+            {{ host.vendor ?? '-' }}
           </DetailRow>
           <DetailRow v-if="host.link_protocols" label="Link-layer">
             seen in {{ host.link_protocols.toUpperCase().split(',').join(' · ') }}

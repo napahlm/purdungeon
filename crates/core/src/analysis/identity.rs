@@ -1,6 +1,6 @@
 //! Resolve the identity columns on `hosts` from the evidence table: the best
 //! hostname, and the best MAC. Frames seen beyond a router only carry the
-//! router's MAC, so ARP, DHCP and LLDP/CDP — which name a device's own —
+//! router's MAC, so ARP, DHCP and LLDP/CDP - which name a device's own -
 //! outrank them by confidence.
 
 use std::collections::HashMap;

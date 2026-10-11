@@ -118,7 +118,7 @@ pub fn parse(bytes: &[u8]) -> Option<DhcpMessage> {
     Some(msg)
 }
 
-/// The parameter request list as `1,3,6,…` — the form fingerprint databases
+/// The parameter request list as `1,3,6,…` - the form fingerprint databases
 /// use, and what the evidence table stores.
 #[must_use]
 pub fn fingerprint(parameter_request_list: &[u8]) -> String {

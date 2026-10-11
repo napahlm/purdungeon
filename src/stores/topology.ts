@@ -1,7 +1,7 @@
 import { ref, computed, shallowRef } from 'vue'
 import { defineStore } from 'pinia'
 import type { Host, Connection, Finding } from '@/types/network'
-import { effectiveLevel, effectiveRole, hostLabel } from '@/types/network'
+import { effectiveLevel, effectiveRole, hostLabel, ROLE_LABELS } from '@/types/network'
 import type { CanvasNode, CanvasEdge, CanvasLink, BandLayout } from '@/types/canvas'
 import {
   BANDS,
@@ -17,8 +17,8 @@ import { parseCidr, ipInCidr, compareAddresses, TRANSPORT_TOKENS } from '@/utils
 import { shortAddress } from '@/utils/format'
 import { useTimelineStore } from './timeline'
 
-const BAND_HEIGHT = 220
-const NODE_SPACING = 130
+const BAND_HEIGHT = 200
+const NODE_SPACING = 120
 const BARYCENTER_SWEEPS = 4
 
 function nodeShape(host: Host): CanvasNode['shape'] {
@@ -26,6 +26,20 @@ function nodeShape(host: Host): CanvasNode['shape'] {
   if (role === 'plc' || role === 'field-device') return 'square'
   if (role === 'network-gear') return 'diamond'
   return 'circle'
+}
+
+const MAX_SUBLABEL = 18
+
+/** The second label line: the device's name when the first line is its
+ *  address, otherwise its role; nothing for a nameless device of unknown role. */
+function nodeSublabel(host: Host): string | null {
+  if (host.ip_address && host.hostname) {
+    const name = host.hostname
+    return name.length > MAX_SUBLABEL ? `${name.slice(0, MAX_SUBLABEL - 1)}…` : name
+  }
+  const role = effectiveRole(host)
+  if (role === 'unknown') return null
+  return role === 'engineering-workstation' ? 'Eng. workstation' : ROLE_LABELS[role]
 }
 
 /** Link thickness from the pair's total bytes: floored so a thin link stays
@@ -66,7 +80,7 @@ function buildLinks(edgeList: CanvasEdge[]): CanvasLink[] {
       if (e.crossZone) crossZone = true
     }
     // Dominant protocol family by volume drives the link colour, unless the
-    // pair crosses a zone — a security signal that always wins.
+    // pair crosses a zone - a security signal that always wins.
     let dominantFamily = edges[0].family
     let max = -1
     for (const [family, bytes] of bytesByFamily) {
@@ -94,7 +108,7 @@ function buildLinks(edgeList: CanvasEdge[]): CanvasLink[] {
  * Static Purdue-banded layout. Hosts sit in horizontal bands by level
  * (process at the bottom, enterprise at the top). Within a band, a few
  * barycenter sweeps pull connected nodes toward their peers in other
- * bands, then nodes are spaced evenly — deterministic and overlap-free.
+ * bands, then nodes are spaced evenly - deterministic and overlap-free.
  */
 function layoutBands(nodes: CanvasNode[], adjacency: Map<number, number[]>): BandLayout[] {
   const byBand = new Map<string, CanvasNode[]>()
@@ -277,7 +291,7 @@ export const useTopologyStore = defineStore('topology', () => {
 
   const filteredNodes = computed(() => {
     // A family filter removes edges, so without this a node whose every edge
-    // is hidden would float unconnected — hide it along with its traffic.
+    // is hidden would float unconnected - hide it along with its traffic.
     if (!timelineStore.filtering && !crossZoneOnly.value && hiddenFamilies.value.size === 0) {
       return visibleNodes.value
     }
@@ -406,6 +420,7 @@ export const useTopologyStore = defineStore('topology', () => {
         bandKey,
         color: levelColor(host),
         label: host.ip_address ? shortAddress(host.ip_address) : hostLabel(host),
+        sublabel: nodeSublabel(host),
         shape: nodeShape(host),
         dashed: host.is_external,
       }
@@ -454,7 +469,7 @@ export const useTopologyStore = defineStore('topology', () => {
   }
 
   /**
-   * Re-derive band, color, and shape after a role/level override — without
+   * Re-derive band, color, and shape after a role/level override - without
    * disturbing the layout the user has arranged. Only the changed node moves
    * (to its new band); everyone keeps their horizontal position, and the view
    * is not re-fit. Bands are restacked vertically only when the override adds
@@ -462,7 +477,7 @@ export const useTopologyStore = defineStore('topology', () => {
    */
   function refreshHost(updated: Host) {
     // Replace the map so computeds reading hostsById (the detail panels)
-    // notice the change — an in-place .set on a shallowRef is invisible.
+    // notice the change - an in-place .set on a shallowRef is invisible.
     const nextHosts = new Map(hostsById.value)
     nextHosts.set(updated.id, updated)
     hostsById.value = nextHosts
@@ -471,6 +486,7 @@ export const useTopologyStore = defineStore('topology', () => {
     node.host = updated
     node.color = levelColor(updated)
     node.shape = nodeShape(updated)
+    node.sublabel = nodeSublabel(updated)
 
     const newBand = bandKeyForHost(updated)
     if (newBand && newBand !== node.bandKey) {
@@ -496,7 +512,7 @@ export const useTopologyStore = defineStore('topology', () => {
       }
     }
     // Re-emit so the derived links (and their colours) refresh and the canvas
-    // re-renders in place — no relayout, no re-fit.
+    // re-renders in place - no relayout, no re-fit.
     nodes.value = [...nodes.value]
     edges.value = [...edges.value]
   }

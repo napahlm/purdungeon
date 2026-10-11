@@ -78,7 +78,7 @@ impl SkippedPackets {
 }
 
 /// What one import did. `frames_read == packet_count + skipped.total()` and
-/// `packet_count == decoded.total()` always hold — the counters reconcile
+/// `packet_count == decoded.total()` always hold - the counters reconcile
 /// with the file, nothing is dropped unaccounted for.
 #[derive(Debug, Clone, Serialize)]
 pub struct ImportResult {

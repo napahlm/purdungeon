@@ -91,8 +91,8 @@ pub struct HostProfile {
     pub capabilities: Vec<String>,
     /// Operating system guessed from DHCP, if any.
     pub os: Option<String>,
-    /// Self-descriptions — SNMP sysDescr, LLDP system description, CDP
-    /// platform and software — each with the protocol that carried it.
+    /// Self-descriptions - SNMP sysDescr, LLDP system description, CDP
+    /// platform and software - each with the protocol that carried it.
     pub descriptions: Vec<(String, String)>,
     /// Vendor named by evidence (SNMP sysObjectID), with its source.
     pub evidence_vendor: Option<(String, String)>,
@@ -104,7 +104,7 @@ fn matches_vendor(vendor: Option<&str>, list: &[&str]) -> bool {
 
 /// Addresses that are unambiguously not hosts: IPv4 multicast (224/4) and
 /// limited broadcast, IPv6 multicast (`ff00::/8`). An `x.x.x.255` suffix is
-/// NOT enough — in a /23 or larger subnet that is a legitimate host address,
+/// NOT enough - in a /23 or larger subnet that is a legitimate host address,
 /// and misclassifying it would hide a real device.
 fn is_multicast_or_broadcast(ip: &str) -> bool {
     match ip.parse::<IpAddr>() {
@@ -118,7 +118,7 @@ fn is_private_v4(v4: Ipv4Addr) -> bool {
     v4.is_private() || v4.is_loopback() || v4.is_link_local() || v4.is_unspecified()
 }
 
-/// `0.0.0.0` or `::` — a client that has no address yet (DHCP discovery).
+/// `0.0.0.0` or `::` - a client that has no address yet (DHCP discovery).
 fn is_unspecified(ip: &str) -> bool {
     ip.parse::<IpAddr>().is_ok_and(|a| a.is_unspecified())
 }

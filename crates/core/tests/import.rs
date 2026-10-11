@@ -188,7 +188,7 @@ fn snaplen_truncated_capture_counts_wire_bytes() {
 #[test]
 fn snaplen_cutting_headers_is_counted_as_truncated() {
     let packets = polling_capture();
-    // 20 bytes: Ethernet plus six bytes of IP header — no addresses survive.
+    // 20 bytes: Ethernet plus six bytes of IP header - no addresses survive.
     let (session, result) = import_bytes(
         "snap20",
         &write_pcap_ex(&packets, MAGIC_MICROS, 1, Some(20)),
@@ -199,7 +199,7 @@ fn snaplen_cutting_headers_is_counted_as_truncated() {
     assert_eq!(result.skipped.truncated, packets.len());
     assert_eq!(session.hosts().unwrap().len(), 0);
 
-    // 40 bytes: the IP header is whole, the TCP header is cut — hosts are
+    // 40 bytes: the IP header is whole, the TCP header is cut - hosts are
     // known, the flow is not.
     let (session, result) = import_bytes(
         "snap40",
@@ -233,7 +233,7 @@ fn pcapng_multi_section_resets_interfaces_and_skips_spbs() {
     file.extend(png_idb(1));
     file.extend(png_epb(t0, &pkt(49000)));
     file.extend(png_epb(t0 + 1_000_000, &pkt(49000)));
-    // A Simple Packet Block carries no timestamp — skipped, not imported at 1970
+    // A Simple Packet Block carries no timestamp - skipped, not imported at 1970
     file.extend(png_spb(&pkt(49001)));
     // Section 2 (mergecap-style): interface table starts over
     file.extend(png_shb());

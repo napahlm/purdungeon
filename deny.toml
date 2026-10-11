@@ -1,8 +1,8 @@
 # cargo-deny policy. purdungeon is MIT and ships as a single binary, so
 # nothing copyleft may enter the dependency tree.
 #
-# Licences are an allow-list: anything not named here — GPL, LGPL, AGPL,
-# NPSL, SSPL included — fails `cargo deny check licenses`. Add a licence only
+# Licences are an allow-list: anything not named here - GPL, LGPL, AGPL,
+# NPSL, SSPL included - fails `cargo deny check licenses`. Add a licence only
 # after reading it; add a crate-specific exception only with a reason.
 
 [graph]

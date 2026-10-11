@@ -1,5 +1,5 @@
 /**
- * Runtime bridge to the design tokens in style.css — the single source of
+ * Runtime bridge to the design tokens in style.css - the single source of
  * truth for color, type, and motion. Konva draws to a canvas and can't read
  * CSS variables, so `initTokens()` (called once in main.ts, before mount)
  * copies them into these objects. Nothing outside style.css defines a color.
@@ -14,7 +14,7 @@ export const UI = {
   textPrimary: '',
   textSecondary: '',
   textMuted: '',
-  /** Selection outline — the brightest neutral, so it reads on any node color. */
+  /** Selection outline - the brightest neutral, so it reads on any node color. */
   selection: '',
   bgPrimary: '',
   bgSecondary: '',

@@ -58,7 +58,7 @@ export interface Cidr {
   prefix: number
 }
 
-/** Parse `addr/n`. Returns null unless the user typed a slash — bare
+/** Parse `addr/n`. Returns null unless the user typed a slash - bare
  *  addresses go through substring search so partial input still matches. */
 export function parseCidr(token: string): Cidr | null {
   const slash = token.indexOf('/')

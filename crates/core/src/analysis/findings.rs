@@ -41,7 +41,7 @@ pub fn generate(conn: &Connection) -> Result<(), CoreError> {
     rejected_requests(conn, &hosts, &mut findings)?;
     cleartext_control(conn, &mut findings)?;
 
-    // Several generators iterate HashMaps, so impose an order here — the same
+    // Several generators iterate HashMaps, so impose an order here - the same
     // capture must always produce the same findings list.
     findings.sort_by(|a, b| {
         (severity_rank(a.severity), a.kind, &a.title, &a.detail).cmp(&(
@@ -181,7 +181,7 @@ fn cross_zone_conduits(
             severity,
             title,
             detail: format!(
-                "{} ↔ {} — {}, {} packets",
+                "{} ↔ {} - {}, {} packets",
                 describe(ha),
                 describe(hb),
                 flow.protocols.join(", "),
@@ -252,7 +252,7 @@ fn writes_to_controllers(
                 target.ip
             ),
             detail: format!(
-                "{} sent {} write request{} to {} — {}",
+                "{} sent {} write request{} to {} - {}",
                 describe(writer),
                 writes,
                 if writes == 1 { "" } else { "s" },
@@ -291,7 +291,7 @@ fn external_on_ot(
             severity: if ot_level <= 1 { "high" } else { "medium" },
             title: format!("External address reaches a level {ot_level} device"),
             detail: format!(
-                "{} ↔ {} — {}, {} packets",
+                "{} ↔ {} - {}, {} packets",
                 describe(ext),
                 describe(ot),
                 flow.protocols.join(", "),
@@ -329,7 +329,7 @@ fn scan_like_behavior(
             severity: "high",
             title: format!("{} probes {} ports on {}", hs.ip, port_count, hd.ip),
             detail: format!(
-                "{} contacted {} distinct ports on {} — looks like a port scan",
+                "{} contacted {} distinct ports on {} - looks like a port scan",
                 describe(hs),
                 port_count,
                 describe(hd)
@@ -358,7 +358,7 @@ fn scan_like_behavior(
             severity: "medium",
             title: format!("{} contacts {peer_count} different hosts", hs.ip),
             detail: format!(
-                "{} initiated conversations with {peer_count} hosts — wide reach for a {}",
+                "{} initiated conversations with {peer_count} hosts - wide reach for a {}",
                 describe(hs),
                 hs.role
             ),
@@ -388,14 +388,14 @@ fn rejected_requests(
             continue;
         };
         if exceptions * 20 < responses {
-            continue; // under 5% — noise
+            continue; // under 5% - noise
         }
         findings.push(FindingRow {
             kind: "exceptions",
             severity: "medium",
             title: format!("{} rejects many requests", h.ip),
             detail: format!(
-                "{} answered {exceptions} of {responses} responses with Modbus exceptions — \
+                "{} answered {exceptions} of {responses} responses with Modbus exceptions - \
                  someone may be asking for things it refuses to do",
                 describe(h)
             ),
@@ -430,7 +430,7 @@ fn cleartext_control(conn: &Connection, findings: &mut Vec<FindingRow>) -> Resul
         severity: "info",
         title: "Control traffic is unauthenticated cleartext".to_string(),
         detail: format!(
-            "{} {} conversation{} ({}) carry no authentication or encryption — normal for these \
+            "{} {} conversation{} ({}) carry no authentication or encryption - normal for these \
              protocols, which is exactly why network segmentation matters",
             flow_count,
             if ot_protocols.len() == 1 {

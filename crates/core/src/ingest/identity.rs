@@ -1,6 +1,6 @@
 //! Identity facts from the protocols that hand them out for free: DHCP,
 //! `NetBIOS` name service, mDNS, LLMNR, SNMP responses, LLDP and CDP. Every
-//! function here is pure — bytes in, facts out — and the ingest sink decides
+//! function here is pure - bytes in, facts out - and the ingest sink decides
 //! which device the facts belong to.
 //!
 //! Confidence is how far the value can be trusted to describe the device it
@@ -47,7 +47,7 @@ pub(crate) enum UdpFacts {
 pub(crate) struct L2Facts {
     pub source: &'static str,
     pub facts: Vec<Fact>,
-    /// Management addresses the announcement names — the surest way to tie
+    /// Management addresses the announcement names - the surest way to tie
     /// it to an IP host.
     pub management: Vec<IpAddr>,
 }
@@ -175,7 +175,7 @@ fn bare_name(name: &str) -> Option<String> {
 }
 
 /// Names and services from an mDNS or LLMNR response. Only responses carry
-/// facts about the sender — a query is about someone else.
+/// facts about the sender - a query is about someone else.
 fn dns_facts(payload: &[u8], with_services: bool) -> Vec<Fact> {
     let Some(msg) = dns::parse(payload) else {
         return Vec::new();

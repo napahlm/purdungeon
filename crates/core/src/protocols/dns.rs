@@ -1,7 +1,7 @@
 //! Minimal DNS wire-format reader (RFC 1035 §4.1) for the identity chatter
 //! that rides on it: mDNS (RFC 6762), LLMNR (RFC 4795) and the `NetBIOS` name
 //! service (RFC 1002, which borrows the layout). It reads only what device
-//! identity needs — names and A/AAAA/PTR/SRV/TXT records — and keeps the raw
+//! identity needs - names and A/AAAA/PTR/SRV/TXT records - and keeps the raw
 //! bytes of anything else so callers can decode protocol-specific records.
 //!
 //! A truncated message yields the records that were complete; nothing here

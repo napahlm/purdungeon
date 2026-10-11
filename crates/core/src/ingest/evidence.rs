@@ -1,5 +1,5 @@
 //! Evidence: one row per (device, kind, value, source) fact, accumulated in
-//! memory during a parse and written once at the end — the same discipline
+//! memory during a parse and written once at the end - the same discipline
 //! as hosts and flows. Role inference and the panels read these rows; no
 //! later stage looks at packets.
 

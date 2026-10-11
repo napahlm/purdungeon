@@ -67,7 +67,7 @@ function onPointerDown(handle: 'start' | 'end', e: PointerEvent) {
 }
 
 /** Pressing the bare track jumps the nearer handle there and starts dragging
- *  it, so the whole strip is interactive — not just the two thin handles. */
+ *  it, so the whole strip is interactive - not just the two thin handles. */
 function onTrackPointerDown(e: PointerEvent) {
   if (dragging.value) return // a handle already claimed this press
   const val = pctToValue(pointerToPercent(e.clientX))

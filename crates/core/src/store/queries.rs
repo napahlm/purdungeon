@@ -6,7 +6,7 @@ use crate::CoreError;
 // ── Bulk-import helper: insert a first-sighted host and return its id ────────
 //
 // The parser's in-memory host cache (preloaded from the DB on append) is the
-// authority on which hosts exist, so this is a plain insert — a UNIQUE
+// authority on which hosts exist, so this is a plain insert - a UNIQUE
 // violation here would mean the cache is out of sync and should surface.
 
 pub fn insert_host(
@@ -155,7 +155,7 @@ pub fn get_time_range(conn: &Connection) -> Result<(f64, f64), CoreError> {
 }
 
 /// Traffic volume over time as a dense array of `buckets` equal slices of the
-/// capture's span — zeros included, so the caller can draw it directly.
+/// capture's span - zeros included, so the caller can draw it directly.
 pub fn get_traffic_histogram(
     conn: &Connection,
     buckets: usize,
@@ -186,7 +186,7 @@ pub fn get_traffic_histogram(
     })?;
     for row in rows {
         let (idx, packets, bytes) = row?;
-        // The capture's last timestamp lands exactly on the upper edge —
+        // The capture's last timestamp lands exactly on the upper edge -
         // clamp it into the final bucket.
         let idx = (idx.max(0) as usize).min(buckets - 1);
         out[idx].packet_count += packets;

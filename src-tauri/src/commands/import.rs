@@ -17,7 +17,7 @@ struct ImportProgress {
 
 /// Run a parse job on the blocking pool while a reporter task emits
 /// `import-progress` every 150 ms. The reporter is stopped by an explicit
-/// signal — success or failure — so a failed import never leaves it spinning.
+/// signal - success or failure - so a failed import never leaves it spinning.
 async fn run_import<R: Send + 'static>(
     app: &AppHandle,
     path: &Path,

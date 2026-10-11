@@ -21,6 +21,12 @@ fn tests_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests")
 }
 
+/// The sample captures in `examples/` double as the golden fixtures: one copy,
+/// in the folder a new user is pointed at first.
+fn examples_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples")
+}
+
 // ── Summary ─────────────────────────────────────────────────────────────────
 
 #[derive(Serialize)]
@@ -174,7 +180,7 @@ fn assert_hash(path: &Path, expected: &str) {
     assert_eq!(
         actual,
         expected,
-        "{} does not match its manifest sha256 — was it modified or line-ending converted?",
+        "{} does not match its manifest sha256 - was it modified or line-ending converted?",
         path.display()
     );
 }
@@ -201,7 +207,7 @@ struct FixtureEntry {
 }
 
 fn fixture_manifest() -> FixtureManifest {
-    let path = tests_dir().join("fixtures").join("MANIFEST.toml");
+    let path = examples_dir().join("MANIFEST.toml");
     toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap()
 }
 
@@ -212,7 +218,7 @@ fn run_fixture(name: &str) {
         .iter()
         .find(|f| f.name == name)
         .unwrap_or_else(|| panic!("fixture {name} is not in MANIFEST.toml"));
-    let path = tests_dir().join("fixtures").join(&entry.file);
+    let path = examples_dir().join(&entry.file);
     assert_hash(&path, &entry.sha256);
     import_and_check(name, &path);
 }
@@ -270,7 +276,7 @@ struct CorpusEntry {
 
 /// Large public captures are not committed; `just fetch-corpus` downloads
 /// them. Ignored by default because importing hundreds of megabytes in a
-/// debug build takes minutes — run with `just golden-corpus`.
+/// debug build takes minutes - run with `just golden-corpus`.
 #[test]
 #[ignore = "needs the fetched corpus; run `just golden-corpus`"]
 fn golden_corpus() {

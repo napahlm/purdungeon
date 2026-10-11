@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted } from 'vue'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
+import { listen } from '@tauri-apps/api/event'
 import { useAppStore } from '@/stores/app'
 import { useTopologyStore } from '@/stores/topology'
 import { useTauri } from '@/composables/useTauri'
@@ -16,11 +17,12 @@ import FilterBar from '@/components/FilterBar.vue'
 import FindingsPanel from '@/components/FindingsPanel.vue'
 import LevelLegend from '@/components/LevelLegend.vue'
 import LoadingOverlay from '@/components/LoadingOverlay.vue'
+import ImportCard from '@/components/ImportCard.vue'
 import { FINDINGS_PANEL_WIDTH, FINDINGS_RAIL_WIDTH, DETAIL_PANEL_WIDTH } from '@/ui/layout'
 
 const appStore = useAppStore()
 const topology = useTopologyStore()
-const { loadFiles } = useTauri()
+const { loadFiles, initialCaptures } = useTauri()
 
 // A detail panel sits on the right; the legend tucks in beside it when open.
 const panelOpen = computed(
@@ -30,12 +32,24 @@ const panelOpen = computed(
     topology.selectedLinkKey !== null,
 )
 
-// Floating controls sit beside the overlaying panels — one shared set of
+// Floating controls sit beside the overlaying panels - one shared set of
 // widths (ui/layout.ts) keeps them aligned as panels open and collapse.
 const filterBarLeft = computed(
   () => (appStore.findingsCollapsed ? FINDINGS_RAIL_WIDTH : FINDINGS_PANEL_WIDTH) + 12 + 'px',
 )
 const legendRight = computed(() => (panelOpen.value ? DETAIL_PANEL_WIDTH + 12 : 12) + 'px')
+
+// The full-screen overlay belongs to a window with nothing loaded yet: it
+// stays up for the whole first batch, and afterwards only to show a batch
+// that produced nothing. Once a session is open, imports run in the card.
+const showOverlay = computed(
+  () =>
+    appStore.freshBatch ||
+    (appStore.loadedFile === null && (appStore.jobs.length > 0 || appStore.error !== null)),
+)
+const showImportCard = computed(
+  () => !appStore.freshBatch && appStore.loadedFile !== null && appStore.jobs.length > 0,
+)
 
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
@@ -43,31 +57,38 @@ function onKeydown(e: KeyboardEvent) {
   }
 }
 
-// Dropping a capture works anywhere, anytime — including over a loaded view,
-// where it replaces the current capture.
+// Dropping captures works anywhere, anytime: on an empty window the first one
+// starts the session, over a loaded view they stitch in, and during a batch
+// they join the queue.
 let unlistenDrop: (() => void) | null = null
+let unlistenOpen: (() => void) | null = null
 
 onMounted(async () => {
   window.addEventListener('keydown', onKeydown)
   const appWindow = getCurrentWebviewWindow()
   unlistenDrop = await appWindow.onDragDropEvent((event) => {
-    if (appStore.loading) return
     if (event.payload.type === 'over') {
       appStore.dragHovering = true
     } else if (event.payload.type === 'drop') {
       appStore.dragHovering = false
-      // Dropping onto a loaded view stitches the files in; the first file on a
-      // fresh window starts the session. loadFiles handles that distinction.
       if (event.payload.paths.length > 0) loadFiles(event.payload.paths)
     } else {
       appStore.dragHovering = false
     }
   })
+
+  // Captures also arrive from the command line and from the OS (a double-
+  // clicked file, "Open with"). Listen first, then drain what queued up before
+  // the window was ready, so nothing falls in the gap between the two.
+  unlistenOpen = await listen<string[]>('open-captures', (event) => loadFiles(event.payload))
+  const initial = await initialCaptures()
+  if (initial.length > 0) loadFiles(initial)
 })
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown)
   unlistenDrop?.()
+  unlistenOpen?.()
 })
 </script>
 
@@ -114,7 +135,9 @@ onUnmounted(() => {
     </template>
     <FileDropZone v-else />
 
-    <!-- Import progress / errors, over either the drop screen or a loaded view -->
-    <LoadingOverlay v-if="appStore.loading || appStore.error" />
+    <LoadingOverlay v-if="showOverlay" />
+    <Transition name="overlay">
+      <ImportCard v-if="showImportCard" />
+    </Transition>
   </div>
 </template>
