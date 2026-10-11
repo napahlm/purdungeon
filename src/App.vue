@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted } from 'vue'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
+import { listen } from '@tauri-apps/api/event'
 import { useAppStore } from '@/stores/app'
 import { useTopologyStore } from '@/stores/topology'
 import { useTauri } from '@/composables/useTauri'
@@ -21,7 +22,7 @@ import { FINDINGS_PANEL_WIDTH, FINDINGS_RAIL_WIDTH, DETAIL_PANEL_WIDTH } from '@
 
 const appStore = useAppStore()
 const topology = useTopologyStore()
-const { loadFiles } = useTauri()
+const { loadFiles, initialCaptures } = useTauri()
 
 // A detail panel sits on the right; the legend tucks in beside it when open.
 const panelOpen = computed(
@@ -60,6 +61,7 @@ function onKeydown(e: KeyboardEvent) {
 // starts the session, over a loaded view they stitch in, and during a batch
 // they join the queue.
 let unlistenDrop: (() => void) | null = null
+let unlistenOpen: (() => void) | null = null
 
 onMounted(async () => {
   window.addEventListener('keydown', onKeydown)
@@ -74,11 +76,19 @@ onMounted(async () => {
       appStore.dragHovering = false
     }
   })
+
+  // Captures also arrive from the command line and from the OS (a double-
+  // clicked file, "Open with"). Listen first, then drain what queued up before
+  // the window was ready, so nothing falls in the gap between the two.
+  unlistenOpen = await listen<string[]>('open-captures', (event) => loadFiles(event.payload))
+  const initial = await initialCaptures()
+  if (initial.length > 0) loadFiles(initial)
 })
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown)
   unlistenDrop?.()
+  unlistenOpen?.()
 })
 </script>
 

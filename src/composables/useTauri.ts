@@ -227,6 +227,18 @@ export function useTauri() {
     await loadFiles(Array.isArray(selected) ? selected : [selected])
   }
 
+  /** Captures named on the command line, or handed over by the OS before the
+   *  window was listening. Drained on the first call. */
+  async function initialCaptures(): Promise<string[]> {
+    return invoke<string[]>('initial_captures')
+  }
+
+  /** The sample captures bundled into the binary (see examples/): three public
+   *  ICS lab traces, loaded as one stitched session. */
+  async function loadSampleCaptures() {
+    await loadFiles(await invoke<string[]>('sample_captures'))
+  }
+
   return {
     importPcap,
     addPcap,
@@ -244,5 +256,7 @@ export function useTauri() {
     setLevelOverride,
     loadFiles,
     pickAndLoadFiles,
+    initialCaptures,
+    loadSampleCaptures,
   }
 }
