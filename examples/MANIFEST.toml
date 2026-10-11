@@ -1,10 +1,11 @@
-# Committed fixture captures for the golden tests (tests/golden.rs).
+# Sample captures. Open them from the start screen ("open the sample
+# captures"), drop them on the window, or pass them on the command line.
 #
-# Each file is small enough to live in git. Its sha256 is asserted by the
-# tests, so a line-ending conversion or a silent replacement fails loudly.
-# The golden snapshots in tests/golden/ legitimately change when oui.toml or
-# analysis/ports.rs change - regenerate with `just golden-update` and review
-# the diff.
+# They double as the fixtures for the golden tests (crates/core/tests/golden.rs):
+# each file's sha256 is asserted there, so a line-ending conversion or a silent
+# replacement fails loudly. The snapshots in crates/core/tests/golden/
+# legitimately change when oui.toml or analysis/ports.rs change; regenerate
+# with `just golden-update` and review the diff.
 #
 # All three come from CISA's ICSNPP Zeek analyzer packages (BSD-3-Clause,
 # Battelle Energy Alliance, LLC). The licence and notice are reproduced in
