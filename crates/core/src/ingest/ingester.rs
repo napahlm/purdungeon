@@ -1147,7 +1147,7 @@ fn upsert_mac_host(
 }
 
 /// Lowercase colon-separated MAC, or empty when the link type carries none.
-fn format_mac(mac: Option<&[u8; 6]>) -> String {
+pub(crate) fn format_mac(mac: Option<&[u8; 6]>) -> String {
     use std::fmt::Write as _;
     let Some(bytes) = mac else {
         return String::new();

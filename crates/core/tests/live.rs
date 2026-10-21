@@ -186,3 +186,44 @@ fn analysis_runs_when_dirty_and_is_skipped_when_idle() {
     assert_eq!(flows[0].packet_count, 2);
     assert_eq!(flows[0].app_protocol.as_deref(), Some("http"));
 }
+
+/// The spool a capture writes is a pcap the reader (and Wireshark) opens:
+/// importing it gives the same session as importing the same frames written
+/// by the test suite's own writer, and single records read back by offset.
+#[test]
+fn spool_round_trips_through_the_reader() {
+    use purdungeon_core::live::{read_record, SpoolWriter};
+
+    let frames = polling_capture();
+    let path =
+        std::env::temp_dir().join(format!("purdungeon-live-spool-{}.pcap", std::process::id()));
+    let mut spool = SpoolWriter::create(&path, Linktype::ETHERNET, 65535).unwrap();
+    let mut offsets = Vec::new();
+    for (ts, data) in &frames {
+        let seconds = ts.trunc() as u32;
+        let micros = (ts.fract() * 1_000_000.0) as u32;
+        offsets.push(
+            spool
+                .write(seconds, micros, data.len() as u32, data)
+                .unwrap(),
+        );
+    }
+    spool.flush().unwrap();
+
+    let (from_spool, spool_result) = import_file(&path).unwrap();
+    let (from_writer, writer_result) = import_bytes("live-spool", &write_pcap(&frames)).unwrap();
+    assert_reconciles(&spool_result);
+    assert_eq!(spool_result.packet_count, writer_result.packet_count);
+    assert_eq!(spool_result.time_range, writer_result.time_range);
+    assert_eq!(
+        session_fingerprint(&from_spool),
+        session_fingerprint(&from_writer)
+    );
+
+    let last = frames.len() - 1;
+    let record = read_record(&path, offsets[last]).unwrap();
+    assert_eq!(record.data, frames[last].1);
+    assert_eq!(record.orig_len, frames[last].1.len() as u32);
+    assert!((record.timestamp - micros(frames[last].0)).abs() < 1e-9);
+    std::fs::remove_file(&path).ok();
+}

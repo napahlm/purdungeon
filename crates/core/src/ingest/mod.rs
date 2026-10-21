@@ -1,7 +1,7 @@
 pub(crate) mod evidence;
 pub(crate) mod frame;
 pub(crate) mod identity;
-pub mod ingester;
+pub(crate) mod ingester;
 pub(crate) mod link;
 pub mod pcap;
 
