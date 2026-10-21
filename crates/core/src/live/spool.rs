@@ -38,7 +38,7 @@ impl SpoolWriter {
         file.write_all(&0i32.to_le_bytes())?; // thiszone
         file.write_all(&0u32.to_le_bytes())?; // sigfigs
         file.write_all(&snaplen.to_le_bytes())?;
-        file.write_all(&u32::from(linktype.0 as u16).to_le_bytes())?;
+        file.write_all(&(linktype.0 as u32).to_le_bytes())?;
         Ok(Self {
             file,
             offset: GLOBAL_HEADER_LEN,

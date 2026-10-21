@@ -227,3 +227,77 @@ fn spool_round_trips_through_the_reader() {
     assert!((record.timestamp - micros(frames[last].0)).abs() < 1e-9);
     std::fs::remove_file(&path).ok();
 }
+
+/// The driver's error paths, which need no privileges: interfaces can be
+/// listed, a bad name is reported as such, and a bad filter (or a lack of
+/// permission, on a machine without BPF access) comes back from `start`
+/// before any thread runs.
+#[cfg(feature = "capture")]
+#[test]
+fn driver_reports_what_a_user_can_act_on() {
+    use purdungeon_core::live::{list_interfaces, start, CaptureError, CaptureOptions};
+
+    let interfaces = list_interfaces().unwrap();
+    #[cfg(target_os = "linux")]
+    assert!(interfaces.iter().any(|i| i.name == "lo"), "{interfaces:?}");
+    let loopback = interfaces
+        .iter()
+        .find(|i| i.is_loopback)
+        .map_or_else(|| "lo0".into(), |i| i.name.clone());
+
+    let session = Session::empty().unwrap();
+    let spool = std::env::temp_dir().join(format!("purdungeon-driver-{}.pcap", std::process::id()));
+    let missing = CaptureOptions {
+        interface: "purdungeon-no-such-interface".into(),
+        filter: None,
+        promiscuous: false,
+    };
+    let error = start(
+        &missing,
+        session.live_writer(LIVE_GRACE_SECS).unwrap(),
+        spool.clone(),
+        Box::new(|_| {}),
+    )
+    .err()
+    .expect("a nonexistent interface cannot be opened");
+    assert!(
+        matches!(
+            error,
+            CaptureError::NoSuchDevice(_) | CaptureError::PermissionDenied { .. }
+        ),
+        "{error}"
+    );
+
+    let bad_filter = CaptureOptions {
+        interface: loopback,
+        filter: Some("this is not bpf".into()),
+        promiscuous: false,
+    };
+    let error = start(
+        &bad_filter,
+        session.live_writer(LIVE_GRACE_SECS).unwrap(),
+        spool.clone(),
+        Box::new(|_| {}),
+    )
+    .err()
+    .expect("a bad filter cannot start a capture");
+    assert!(
+        matches!(
+            error,
+            CaptureError::BadFilter(_) | CaptureError::PermissionDenied { .. }
+        ),
+        "{error}"
+    );
+    assert_eq!(
+        error.code(),
+        if matches!(error, CaptureError::BadFilter(_)) {
+            "bad-filter"
+        } else {
+            "permission-denied"
+        }
+    );
+    assert!(
+        !spool.exists(),
+        "no spool is created for a capture that never started"
+    );
+}

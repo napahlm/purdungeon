@@ -8,12 +8,16 @@
 //! libpcap driver that reads the interface is the only part that needs the
 //! `capture` cargo feature.
 
+#[cfg(feature = "capture")]
+mod driver;
 mod ring;
 mod spool;
 mod summary;
 mod types;
 mod writer;
 
+#[cfg(feature = "capture")]
+pub use driver::{list_interfaces, start, CaptureHandle};
 pub use ring::{PacketRing, DEFAULT_RING_CAPACITY};
 pub use spool::{read_record, SpoolRecord, SpoolWriter};
 pub use summary::{detail, summarize};
