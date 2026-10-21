@@ -804,3 +804,122 @@ pub fn assert_reconciles(result: &ImportResult) {
         "packet count must equal the decoded breakdown: {result:?}"
     );
 }
+
+// ── Fingerprint ─────────────────────────────────────────────────────────────
+
+/// Host id → the address the fingerprint names it by.
+type Addresses = std::collections::BTreeMap<i64, String>;
+
+fn host_line(session: &Session, addresses: &Addresses, h: &purdungeon_core::types::Host) -> String {
+    let detail = session.host_detail(h.id).unwrap();
+    let mut evidence: Vec<String> = detail
+        .evidence
+        .iter()
+        .map(|e| {
+            format!(
+                "    {}={:?} via {} x{} conf {:.2} {}..{}",
+                e.kind,
+                e.value,
+                e.source_protocol,
+                e.count,
+                e.confidence,
+                e.first_seen,
+                e.last_seen
+            )
+        })
+        .collect();
+    evidence.sort();
+    let modbus = session.modbus_host_activity(h.id).unwrap();
+    format!(
+        "host {} mac {} vendor {:?} name {:?} role {} ({:.2}) level {:?} ext {} proto {:?} link {:?} seen {}..{} packets {} bytes {} vlans {:?} modbus client {} server {} units {:?}\n{}",
+        addresses[&h.id],
+        h.mac_address,
+        h.vendor,
+        h.hostname,
+        h.role,
+        h.role_confidence,
+        h.purdue_level,
+        h.is_external,
+        h.protocols,
+        h.link_protocols,
+        h.first_seen,
+        h.last_seen,
+        detail.total_packets,
+        detail.total_bytes,
+        detail.vlans,
+        modbus.as_client.len(),
+        modbus.as_server.len(),
+        modbus.unit_ids_served,
+        evidence.join("\n")
+    )
+}
+
+fn flow_line(addresses: &Addresses, c: &purdungeon_core::types::Connection) -> String {
+    format!(
+        "flow {}:{} -> {}:{} {} app {:?} vlan {:?} packets {} bytes {} seen {}..{}",
+        addresses[&c.src_host_id],
+        c.src_port,
+        addresses[&c.dst_host_id],
+        c.dst_port,
+        c.protocol,
+        c.app_protocol,
+        c.vlan_id,
+        c.packet_count,
+        c.byte_count,
+        c.first_seen,
+        c.last_seen
+    )
+}
+
+fn finding_line(addresses: &Addresses, f: &purdungeon_core::types::Finding) -> String {
+    let mut hosts: Vec<&String> = f.host_ids.iter().map(|id| &addresses[id]).collect();
+    hosts.sort();
+    format!(
+        "finding {} {} {:?} {:?} hosts {:?} conns {}",
+        f.kind,
+        f.severity,
+        f.title,
+        f.detail,
+        hosts,
+        f.connection_ids.len()
+    )
+}
+
+/// Everything the core derived from a session, keyed by addresses rather
+/// than row ids, so two sessions built from the same traffic by different
+/// routes (one import, or a live stream of batches) can be compared.
+pub fn session_fingerprint(session: &Session) -> String {
+    let hosts = session.hosts().unwrap();
+    let addresses: Addresses = hosts
+        .iter()
+        .map(|h| {
+            let address = h
+                .ip_address
+                .clone()
+                .unwrap_or_else(|| format!("mac:{}", h.mac_address));
+            (h.id, address)
+        })
+        .collect();
+    let mut lines: Vec<String> = hosts
+        .iter()
+        .map(|h| host_line(session, &addresses, h))
+        .collect();
+    lines.sort();
+    let mut flows: Vec<String> = session
+        .connections()
+        .unwrap()
+        .iter()
+        .map(|c| flow_line(&addresses, c))
+        .collect();
+    flows.sort();
+    let mut findings: Vec<String> = session
+        .findings()
+        .unwrap()
+        .iter()
+        .map(|f| finding_line(&addresses, f))
+        .collect();
+    findings.sort();
+    lines.extend(flows);
+    lines.extend(findings);
+    lines.join("\n") + "\n"
+}
