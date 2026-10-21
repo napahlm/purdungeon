@@ -80,6 +80,8 @@ pub struct CaptureStatus {
     pub promiscuous: bool,
     /// Epoch seconds when the capture started.
     pub started_at: f64,
+    /// Epoch seconds when it stopped or failed; `None` while running.
+    pub stopped_at: Option<f64>,
     /// Frame accounting, the same shape a file import reports.
     pub counts: ImportResult,
     /// Bytes on the wire across every frame read.

@@ -237,6 +237,7 @@ pub fn start(
         linktype: datalink.get_name().unwrap_or_else(|_| linktype.to_string()),
         promiscuous,
         started_at: now(),
+        stopped_at: None,
         counts: ImportResult {
             frames_read: 0,
             packet_count: 0,
@@ -442,6 +443,7 @@ impl Worker {
         let result = outcome.and(committed).and(finished);
         let mut status = lock(&self.shared.status);
         status.seq += 1;
+        status.stopped_at = Some(now());
         match &result {
             Ok(counts) => {
                 status.state = CaptureState::Stopped;

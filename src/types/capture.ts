@@ -51,6 +51,8 @@ export interface CaptureStatus {
   linktype: string
   promiscuous: boolean
   started_at: number
+  /** Epoch seconds when it stopped or failed; null while running. */
+  stopped_at: number | null
   counts: ImportResult
   bytes: number
   pps: number

@@ -22,7 +22,7 @@ onUnmounted(() => {
 const elapsed = computed(() => {
   const s = status.value
   if (!s) return 0
-  const end = s.state === 'running' ? now.value : s.counts.time_range[1] || now.value
+  const end = s.stopped_at ?? now.value
   return Math.max(0, end - s.started_at)
 })
 
