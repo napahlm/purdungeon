@@ -71,13 +71,27 @@ async fn run_import<R: Send + 'static>(
     result
 }
 
+/// A file cannot join a session while an interface is feeding it: the parse
+/// would hold the session for its whole duration and stall every batch.
+fn refuse_during_capture(state: &AppState) -> Result<(), CoreError> {
+    if state.capture_running() {
+        return Err(CoreError::Internal(
+            "stop the live capture before adding files".into(),
+        ));
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn import_pcap(
     path: String,
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<ImportResult, CoreError> {
-    // Drop previous session (cleans up its temp DB on drop)
+    refuse_during_capture(&state)?;
+    // Drop the previous session (its temp DB goes with it) and the spool of
+    // a capture that fed it.
+    state.drop_capture();
     {
         let mut lock = state
             .session
@@ -111,6 +125,7 @@ pub async fn add_pcap(
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<ImportResult, CoreError> {
+    refuse_during_capture(&state)?;
     let pcap_path = PathBuf::from(&path);
     let parse_path = pcap_path.clone();
     // Hand a clone of the shared session to the blocking parse task.
