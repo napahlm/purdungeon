@@ -4,7 +4,7 @@
 
 mod findings;
 mod identity;
-mod ports;
+pub(crate) mod ports;
 mod roles;
 
 use rusqlite::Connection;

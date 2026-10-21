@@ -12,6 +12,13 @@ import type {
   Finding,
   Role,
 } from '@/types/network'
+import type {
+  CaptureOptions,
+  CaptureStatus,
+  InterfaceInfo,
+  PacketDetail,
+  PacketPage,
+} from '@/types/capture'
 import { useAppStore, type ImportStage } from '@/stores/app'
 import { useTopologyStore } from '@/stores/topology'
 import { useTimelineStore } from '@/stores/timeline'
@@ -37,6 +44,9 @@ function humanizeError(raw: string): string {
   }
   if (msg.includes('io error') || msg.includes('no such file') || msg.includes('os error')) {
     return 'Couldn’t open that file. Check that it still exists and is readable.'
+  }
+  if (msg.includes('stop the live capture')) {
+    return 'Stop the live capture before adding files to this network.'
   }
   return raw
 }
@@ -111,6 +121,76 @@ export function useTauri() {
     return invoke<void>('set_level_override', { hostId, level })
   }
 
+  // ── Live capture ──────────────────────────────────────────────────────
+
+  async function listInterfaces(): Promise<InterfaceInfo[]> {
+    return invoke<InterfaceInfo[]>('list_interfaces')
+  }
+
+  async function startCapture(options: CaptureOptions): Promise<CaptureStatus> {
+    return invoke<CaptureStatus>('start_capture', { options })
+  }
+
+  async function stopCapture(): Promise<CaptureStatus> {
+    return invoke<CaptureStatus>('stop_capture')
+  }
+
+  async function captureStatus(): Promise<CaptureStatus | null> {
+    return invoke<CaptureStatus | null>('capture_status')
+  }
+
+  async function getPackets(
+    offset: number,
+    limit: number,
+    query: string | null,
+  ): Promise<PacketPage> {
+    return invoke<PacketPage>('get_packets', { offset, limit, query })
+  }
+
+  async function getPacketDetail(no: number): Promise<PacketDetail> {
+    return invoke<PacketDetail>('get_packet_detail', { no })
+  }
+
+  /** Copy the capture's spool to `path`; resolves to the bytes written. */
+  async function saveCapture(path: string): Promise<number> {
+    return invoke<number>('save_capture', { path })
+  }
+
+  /** Stop any capture, remove its spool, and drop the session. */
+  async function closeSession(): Promise<void> {
+    return invoke<void>('close_session')
+  }
+
+  /**
+   * Fold the session's latest state into the view in place: the once-a-second
+   * refresh during a live capture. Nothing is rebuilt or re-fitted, a user's
+   * time window survives, and the histogram (a scan of every packet) is only
+   * fetched when asked.
+   */
+  async function refreshLive(withHistogram: boolean) {
+    const appStore = useAppStore()
+    const topologyStore = useTopologyStore()
+    const timelineStore = useTimelineStore()
+    const [hosts, connections, timeRange, findings, histogram] = await Promise.all([
+      getHosts(),
+      getConnections(),
+      getTimeRange(),
+      getFindings(),
+      withHistogram ? getTrafficHistogram(HISTOGRAM_BUCKETS) : Promise.resolve(null),
+    ])
+    timelineStore.extendFullRange(timeRange[0], timeRange[1])
+    if (histogram) timelineStore.histogram = histogram
+    if (topologyStore.nodes.length === 0) {
+      // The first devices of a fresh live session: lay them out and fit
+      // the view once, as a file import would.
+      topologyStore.buildGraph(hosts, connections)
+    } else {
+      topologyStore.mergeGraph(hosts, connections)
+    }
+    topologyStore.findings = findings
+    appStore.liveTick += 1
+  }
+
   /** Fetch the (possibly merged) session and rebuild the topology from it. */
   async function refreshView(reset: boolean) {
     const topologyStore = useTopologyStore()
@@ -140,7 +220,7 @@ export function useTauri() {
     const appStore = useAppStore()
     if (workerRunning) return
     workerRunning = true
-    const startedFresh = appStore.loadedFile === null
+    const startedFresh = appStore.sessionName === null
     appStore.freshBatch = startedFresh
 
     // The backend's events name no file; the worker never overlaps imports,
@@ -174,7 +254,7 @@ export function useTauri() {
         appStore.startJob(job.id)
         // The first file into an empty session replaces; everything after
         // stitches in. Decided per job, so a failed first file is not fatal.
-        const mode = appStore.loadedFile === null ? 'replace' : 'append'
+        const mode = appStore.sessionName === null ? 'replace' : 'append'
         try {
           const result = mode === 'append' ? await addPcap(job.path) : await importPcap(job.path)
           if (result.packet_count === 0 && mode === 'replace') {
@@ -263,5 +343,14 @@ export function useTauri() {
     pickAndLoadFiles,
     initialCaptures,
     loadSampleCaptures,
+    listInterfaces,
+    startCapture,
+    stopCapture,
+    captureStatus,
+    getPackets,
+    getPacketDetail,
+    saveCapture,
+    closeSession,
+    refreshLive,
   }
 }

@@ -189,6 +189,42 @@ function reflowBands(nodes: CanvasNode[]): BandLayout[] {
   return layouts
 }
 
+/**
+ * Identifies a finding by what it says rather than by its row id: the
+ * analysis rewrites the findings table on every run during a live capture,
+ * so ids churn while the finding itself stays the same.
+ */
+export function findingKey(finding: Finding): string {
+  return `${finding.kind}|${finding.title}|${finding.detail}`
+}
+
+/**
+ * Where a node that just appeared goes: under the neighbours it talks to
+ * in other bands if any are placed, else to the right of its band, nudged
+ * right until it is clear of the nodes already there. Nothing else moves.
+ */
+function placeNewNode(
+  node: CanvasNode,
+  placed: CanvasNode[],
+  peers: CanvasNode[],
+  band: BandLayout,
+): void {
+  const inBand = placed.filter((n) => n.bandKey === node.bandKey)
+  const elsewhere = peers.filter((p) => p.bandKey !== node.bandKey)
+  let x: number
+  if (elsewhere.length > 0) {
+    x = elsewhere.reduce((sum, p) => sum + p.x, 0) / elsewhere.length
+  } else if (inBand.length > 0) {
+    x = Math.max(...inBand.map((n) => n.x)) + NODE_SPACING
+  } else {
+    x = 0
+  }
+  const taken = inBand.map((n) => n.x)
+  while (taken.some((t) => Math.abs(t - x) < NODE_SPACING * 0.75)) x += NODE_SPACING
+  node.x = x
+  node.y = band.y + band.height / 2
+}
+
 function respace(band: CanvasNode[], layout: BandLayout): void {
   const n = band.length
   for (let i = 0; i < n; i++) {
@@ -222,18 +258,19 @@ export const useTopologyStore = defineStore('topology', () => {
 
   // Findings and the highlight they drive on the canvas
   const findings = ref<Finding[]>([])
-  const activeFindingId = ref<number | null>(null)
+  const activeFindingKey = ref<string | null>(null)
 
   const activeFinding = computed(
-    () => findings.value.find((f) => f.id === activeFindingId.value) ?? null,
+    () => findings.value.find((f) => findingKey(f) === activeFindingKey.value) ?? null,
   )
 
   function toggleFinding(finding: Finding) {
-    if (activeFindingId.value === finding.id) {
-      activeFindingId.value = null
+    const key = findingKey(finding)
+    if (activeFindingKey.value === key) {
+      activeFindingKey.value = null
       return
     }
-    activeFindingId.value = finding.id
+    activeFindingKey.value = key
     // A finding about exactly one conversation opens its detail directly; one
     // about several conversations between the same pair opens their link list.
     if (finding.connection_ids.length === 1) {
@@ -469,6 +506,121 @@ export const useTopologyStore = defineStore('topology', () => {
   }
 
   /**
+   * Fold a newer snapshot of the session into the graph in place: live
+   * traffic has added hosts and conversations, or changed what is known
+   * about the existing ones. Nodes keep their objects (so the canvas keeps
+   * their groups and the user keeps pan, zoom and positions), edges keep
+   * theirs (so link widths follow the byte counts), new nodes are placed
+   * beside what is already there, and bands only restack when a level
+   * appears or empties. `layoutVersion` is untouched: nothing re-fits.
+   */
+  function mergeGraph(hosts: Host[], connections: Connection[]) {
+    hostsById.value = new Map(hosts.map((h) => [h.id, h]))
+    connectionsById.value = new Map(connections.map((c) => [c.id, c]))
+
+    const previous = nodesByHostId.value
+    const nodeMap = new Map<number, CanvasNode>()
+    const kept: CanvasNode[] = []
+    const added: CanvasNode[] = []
+    const moved: CanvasNode[] = []
+    for (const host of hosts) {
+      const bandKey = bandKeyForHost(host)
+      if (!bandKey) continue
+      const node = previous.get(host.id)
+      if (node) {
+        node.host = host
+        node.color = levelColor(host)
+        node.label = host.ip_address ? shortAddress(host.ip_address) : hostLabel(host)
+        node.sublabel = nodeSublabel(host)
+        node.shape = nodeShape(host)
+        node.dashed = host.is_external
+        if (node.bandKey !== bandKey) {
+          node.bandKey = bandKey
+          moved.push(node)
+        }
+        nodeMap.set(host.id, node)
+        kept.push(node)
+      } else {
+        const fresh: CanvasNode = {
+          host,
+          x: 0,
+          y: 0,
+          bandKey,
+          color: levelColor(host),
+          label: host.ip_address ? shortAddress(host.ip_address) : hostLabel(host),
+          sublabel: nodeSublabel(host),
+          shape: nodeShape(host),
+          dashed: host.is_external,
+        }
+        nodeMap.set(host.id, fresh)
+        added.push(fresh)
+      }
+    }
+
+    const previousEdges = new Map(edges.value.map((e) => [e.connection.id, e]))
+    const nextEdges: CanvasEdge[] = []
+    const adjacency = new Map<number, number[]>()
+    for (const conn of connections) {
+      const source = nodeMap.get(conn.src_host_id)
+      const target = nodeMap.get(conn.dst_host_id)
+      if (!source || !target || source === target) continue
+      const family = protoFamily(conn.app_protocol)
+      const crossZone = isCrossZone(effectiveLevel(source.host), effectiveLevel(target.host))
+      const color = crossZone ? UI.alert : PROTO_COLORS[family]
+      const edge = previousEdges.get(conn.id)
+      if (edge) {
+        edge.connection = conn
+        edge.source = source
+        edge.target = target
+        edge.family = family
+        edge.crossZone = crossZone
+        edge.color = color
+        nextEdges.push(edge)
+      } else {
+        nextEdges.push({ connection: conn, source, target, color, family, crossZone })
+      }
+      addAdjacency(adjacency, conn.src_host_id, conn.dst_host_id)
+      addAdjacency(adjacency, conn.dst_host_id, conn.src_host_id)
+    }
+
+    const all = [...kept, ...added]
+    const occupiedBefore = new Set(bands.value.map((b) => b.key))
+    const occupiedAfter = new Set(all.map((n) => n.bandKey))
+    const bandsChanged =
+      occupiedBefore.size !== occupiedAfter.size ||
+      [...occupiedAfter].some((k) => !occupiedBefore.has(k))
+    if (bandsChanged) {
+      // A level appeared or emptied: restack bands but keep each node's x.
+      bands.value = reflowBands(all)
+    } else {
+      const byKey = new Map(bands.value.map((b) => [b.key, b]))
+      for (const node of moved) {
+        const band = byKey.get(node.bandKey)
+        if (band) node.y = band.y + band.height / 2
+      }
+    }
+
+    // New nodes are placed one at a time, each beside what is placed so far,
+    // in address order so the same traffic lands the same way.
+    added.sort((a, b) => compareAddresses(a.host.ip_address ?? '', b.host.ip_address ?? ''))
+    const placed = [...kept]
+    const byKey = new Map(bands.value.map((b) => [b.key, b]))
+    for (const node of added) {
+      const band = byKey.get(node.bandKey)
+      if (!band) continue
+      const peers = (adjacency.get(node.host.id) ?? [])
+        .map((id) => nodeMap.get(id))
+        .filter((n): n is CanvasNode => !!n && placed.includes(n))
+      placeNewNode(node, placed, peers, band)
+      placed.push(node)
+    }
+
+    nodes.value = all
+    nodesByHostId.value = nodeMap
+    edges.value = nextEdges
+  }
+
+  /**
    * Re-derive band, color, and shape after a role/level override - without
    * disturbing the layout the user has arranged. Only the changed node moves
    * (to its new band); everyone keeps their horizontal position, and the view
@@ -572,7 +724,7 @@ export const useTopologyStore = defineStore('topology', () => {
     selectedNodeId.value = null
     selectedEdgeId.value = null
     selectedLinkKey.value = null
-    activeFindingId.value = null
+    activeFindingKey.value = null
   }
 
   function reset() {
@@ -590,13 +742,14 @@ export const useTopologyStore = defineStore('topology', () => {
     hiddenBands.value = new Set()
     crossZoneOnly.value = false
     findings.value = []
-    activeFindingId.value = null
+    activeFindingKey.value = null
   }
 
   return {
     nodes,
     edges,
     bands,
+    nodesByHostId,
     hostsById,
     connectionsById,
     layoutVersion,
@@ -608,7 +761,7 @@ export const useTopologyStore = defineStore('topology', () => {
     hiddenBands,
     crossZoneOnly,
     findings,
-    activeFindingId,
+    activeFindingKey,
     activeFinding,
     toggleFinding,
     presentFamilies,
@@ -621,6 +774,7 @@ export const useTopologyStore = defineStore('topology', () => {
     matchedNodeIds,
     matchedLinkKeys,
     buildGraph,
+    mergeGraph,
     refreshHost,
     moveNode,
     toggleFamily,

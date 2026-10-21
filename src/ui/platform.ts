@@ -3,3 +3,5 @@ export const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(
 
 /** Display label for the primary modifier key (search shortcut, etc.). */
 export const modKeyLabel = isMac ? '⌘' : 'Ctrl'
+
+export const isWindows = typeof navigator !== 'undefined' && /Win/.test(navigator.userAgent)

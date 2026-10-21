@@ -108,9 +108,11 @@ impl EvidenceSink {
         }
     }
 
-    /// Write every accumulated row, merging into rows an earlier capture
-    /// already stored. Rows are written in key order so ids are stable.
-    pub fn flush(&self, conn: &rusqlite::Connection) -> Result<(), CoreError> {
+    /// Write every accumulated row, merging into rows an earlier capture or
+    /// checkpoint already stored, and start afresh so the next flush only
+    /// adds what was seen since. Rows are written in key order so ids are
+    /// stable. Returns how many rows were written.
+    pub fn flush(&mut self, conn: &rusqlite::Connection) -> Result<usize, CoreError> {
         let mut keys: Vec<&Key> = self.rows.keys().collect();
         keys.sort();
         let mut stmt = conn.prepare_cached(
@@ -136,6 +138,8 @@ impl EvidenceSink {
                 agg.count
             ])?;
         }
-        Ok(())
+        let written = self.rows.len();
+        self.rows.clear();
+        Ok(written)
     }
 }

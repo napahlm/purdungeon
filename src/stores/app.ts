@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import type { LinkLayerCounts, SkippedPackets } from '@/types/network'
+import type { ImportResult, LinkLayerCounts, SkippedPackets } from '@/types/network'
 import { addDecoded, addSkipped, emptyDecoded, emptySkipped } from '@/utils/skipped'
 
 /** Backend stages arrive over the `import-stage` event; `building-view`
@@ -76,11 +76,16 @@ export function jobStatusText(job: ImportJob): string {
   }
 }
 
-/** One capture that has been stitched into the current session. */
+/** One capture that has been stitched into the current session: a file, or
+ *  a finished live run on an interface. */
 export interface CaptureSource {
-  path: string
+  label: string
+  kind: 'file' | 'live'
   packets: number
 }
+
+export type SessionKind = 'file' | 'live'
+export type AppView = 'topology' | 'capture'
 
 /** The per-file frame accounting an import returns. */
 export interface ImportCounts {
@@ -90,10 +95,20 @@ export interface ImportCounts {
 }
 
 export const useAppStore = defineStore('app', () => {
-  const loadedFile = ref<string | null>(null)
+  // What the session is named after: the first file's path, or the interface
+  // a live capture started on. Null until something is loaded.
+  const sessionName = ref<string | null>(null)
+  const sessionKind = ref<SessionKind | null>(null)
   // Every capture merged into the session, in load order. The first is the
-  // one `loadedFile` names; the rest were appended.
+  // one `sessionName` names; the rest were appended.
   const sources = ref<CaptureSource[]>([])
+  // Which tab is showing: the topology, or the live packet list.
+  const activeView = ref<AppView>('topology')
+  // Bumped after every live refresh so open panels re-fetch their detail.
+  const liveTick = ref(0)
+  // The running capture's cumulative counts, until it stops and becomes a
+  // source like any file.
+  const liveCounts = ref<ImportResult | null>(null)
   // A batch-level problem that produced no jobs (nothing droppable, say).
   const error = ref<string | null>(null)
   const dragHovering = ref(false)
@@ -118,6 +133,16 @@ export const useAppStore = defineStore('app', () => {
   const loading = computed(() =>
     jobs.value.some((j) => j.status === 'queued' || j.status === 'running'),
   )
+
+  // Session totals as the header shows them: every finished source plus the
+  // capture still running.
+  const totalSkipped = computed(() =>
+    liveCounts.value ? addSkipped(skipped.value, liveCounts.value.skipped) : skipped.value,
+  )
+  const totalDecoded = computed(() =>
+    liveCounts.value ? addDecoded(decoded.value, liveCounts.value.decoded) : decoded.value,
+  )
+  const totalFramesRead = computed(() => framesRead.value + (liveCounts.value?.frames_read ?? 0))
 
   function enqueue(paths: string[]): ImportJob[] {
     const created: ImportJob[] = paths.map((path) => ({
@@ -168,22 +193,48 @@ export const useAppStore = defineStore('app', () => {
 
   /** A fresh capture replaces the session: it becomes the first source. */
   function setLoadedFile(path: string, packets: number, counts?: ImportCounts) {
-    loadedFile.value = path
-    sources.value = [{ path, packets }]
+    sessionName.value = path
+    sessionKind.value = 'file'
+    sources.value = [{ label: path, kind: 'file', packets }]
     skipped.value = counts?.skipped ?? emptySkipped()
     decoded.value = counts?.decoded ?? emptyDecoded()
     framesRead.value = counts?.frames_read ?? 0
+    liveCounts.value = null
     error.value = null
   }
 
   /** An appended capture joins the existing source list. */
   function addSource(path: string, packets: number, counts?: ImportCounts) {
-    sources.value = [...sources.value, { path, packets }]
+    sources.value = [...sources.value, { label: path, kind: 'file', packets }]
     if (counts) {
       skipped.value = addSkipped(skipped.value, counts.skipped)
       decoded.value = addDecoded(decoded.value, counts.decoded)
       framesRead.value += counts.frames_read
     }
+  }
+
+  /** A capture started on an interface. With nothing loaded it opens the
+   *  session; over a loaded one it stitches in, like a dropped file. */
+  function startLiveSession(iface: string) {
+    if (sessionName.value === null) {
+      sessionName.value = iface
+      sessionKind.value = 'live'
+      sources.value = []
+      skipped.value = emptySkipped()
+      decoded.value = emptyDecoded()
+      framesRead.value = 0
+    }
+    liveCounts.value = null
+    error.value = null
+  }
+
+  /** The capture stopped: its counts become a source of their own. */
+  function finishLiveSource(iface: string, counts: ImportResult) {
+    sources.value = [...sources.value, { label: iface, kind: 'live', packets: counts.packet_count }]
+    skipped.value = addSkipped(skipped.value, counts.skipped)
+    decoded.value = addDecoded(decoded.value, counts.decoded)
+    framesRead.value += counts.frames_read
+    liveCounts.value = null
   }
 
   function setError(message: string) {
@@ -195,8 +246,11 @@ export const useAppStore = defineStore('app', () => {
   }
 
   function reset() {
-    loadedFile.value = null
+    sessionName.value = null
+    sessionKind.value = null
     sources.value = []
+    liveCounts.value = null
+    liveTick.value = 0
     skipped.value = emptySkipped()
     decoded.value = emptyDecoded()
     framesRead.value = 0
@@ -208,7 +262,14 @@ export const useAppStore = defineStore('app', () => {
 
   return {
     loading,
-    loadedFile,
+    sessionName,
+    sessionKind,
+    activeView,
+    liveTick,
+    liveCounts,
+    totalSkipped,
+    totalDecoded,
+    totalFramesRead,
     sources,
     error,
     dragHovering,
@@ -227,6 +288,8 @@ export const useAppStore = defineStore('app', () => {
     clearFinishedJobs,
     setLoadedFile,
     addSource,
+    startLiveSession,
+    finishLiveSource,
     setError,
     clearError,
     reset,

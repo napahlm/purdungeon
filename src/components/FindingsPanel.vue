@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { storeToRefs } from 'pinia'
-import { useTopologyStore } from '@/stores/topology'
+import { findingKey, useTopologyStore } from '@/stores/topology'
 import { useAppStore } from '@/stores/app'
 import { FINDINGS_PANEL_WIDTH, FINDINGS_RAIL_WIDTH } from '@/ui/layout'
 
@@ -96,9 +96,13 @@ const topSeverity = computed(() => SEVERITY_ORDER.find((s) => counts.value[s] > 
     <div class="flex-1 overflow-y-auto">
       <button
         v-for="finding in topology.findings"
-        :key="finding.id"
+        :key="findingKey(finding)"
         class="block w-full border-b border-border/50 px-4 py-3 text-left transition-colors"
-        :class="topology.activeFindingId === finding.id ? 'bg-bg-elevated' : 'hover:bg-bg-surface'"
+        :class="
+          topology.activeFindingKey === findingKey(finding)
+            ? 'bg-bg-elevated'
+            : 'hover:bg-bg-surface'
+        "
         @click="topology.toggleFinding(finding)"
       >
         <div class="flex items-start gap-2.5">

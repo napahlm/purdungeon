@@ -13,6 +13,9 @@ ci: lint test deny
 test:
     cargo test --workspace
 
+# The workspace enables the core's `capture` feature through the shell, so
+# clippy and check need libpcap headers (in the macOS SDK; `libpcap-dev` on
+# Debian). `cargo test -p purdungeon-core` alone does not.
 lint:
     pnpm eslint src/
     cargo clippy --workspace --all-targets -- -D warnings

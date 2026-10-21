@@ -4,6 +4,7 @@
 pub mod analysis;
 pub mod error;
 pub mod ingest;
+pub mod live;
 pub mod oui;
 pub mod protocols;
 pub mod store;
@@ -60,6 +61,22 @@ impl Session {
                 Err(e)
             }
         }
+    }
+
+    /// A session with nothing in it yet, for traffic that arrives live.
+    pub fn empty() -> Result<Self, CoreError> {
+        let (conn, db_path) = store::schema::init_db()?;
+        Ok(Self {
+            conn: Arc::new(Mutex::new(conn)),
+            path: db_path,
+        })
+    }
+
+    /// A writer that folds batches of live frames into this session. The
+    /// writer shares the session's connection and locks it only while it
+    /// commits a batch, so queries keep working during a capture.
+    pub fn live_writer(&self, grace_secs: f64) -> Result<live::LiveWriter, CoreError> {
+        live::LiveWriter::new(Arc::clone(&self.conn), grace_secs)
     }
 
     /// Merge another capture into this session: parse it into the existing

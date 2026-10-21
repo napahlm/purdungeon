@@ -188,7 +188,7 @@ fn sll_ether_type(protocol: LinuxSllProtocolType) -> u16 {
 }
 
 /// The innermost ethertype and payload of a frame that carried no IP packet.
-fn ether_payload<'a>(parsed: &LaxSlicedPacket<'a>) -> Option<(u16, &'a [u8])> {
+pub(crate) fn ether_payload<'a>(parsed: &LaxSlicedPacket<'a>) -> Option<(u16, &'a [u8])> {
     if let Some(ext) = parsed.link_exts.last() {
         return match ext {
             LaxLinkExtSlice::Vlan(tag) => Some((tag.ether_type().0, tag.payload_slice())),

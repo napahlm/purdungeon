@@ -64,6 +64,10 @@ export function createLinkLine(
     perfectDrawEnabled: false,
     forcedOpacity: null,
   })
+  // The current link lives on the shape: the store derives a fresh link
+  // object on every change, and the hover handlers must restyle from the
+  // newest one, not the one this line was created with.
+  line.setAttr('link', link)
 
   if (callbacks?.onClick) {
     const cb = callbacks.onClick
@@ -75,14 +79,14 @@ export function createLinkLine(
       const stage = line.getStage()
       if (stage) stage.container().style.cursor = 'pointer'
       line.setAttr('hovered', true)
-      applyLinkStyle(line, link)
+      applyLinkStyle(line, line.getAttr('link') as CanvasLink)
       line.getLayer()?.batchDraw()
     })
     line.on('mouseleave', () => {
       const stage = line.getStage()
       if (stage) stage.container().style.cursor = 'default'
       line.setAttr('hovered', false)
-      applyLinkStyle(line, link)
+      applyLinkStyle(line, line.getAttr('link') as CanvasLink)
       line.getLayer()?.batchDraw()
     })
   }
@@ -102,6 +106,7 @@ export function updateLinkLine(
   forcedOpacity?: number | null,
 ) {
   line.points(linkCurve(link))
+  line.setAttr('link', link)
   line.setAttr('selected', selected)
   if (forcedOpacity !== undefined) line.setAttr('forcedOpacity', forcedOpacity)
   applyLinkStyle(line, link)

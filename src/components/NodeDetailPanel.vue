@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { useTopologyStore } from '@/stores/topology'
+import { useAppStore } from '@/stores/app'
 import { useTauri } from '@/composables/useTauri'
 import type { HostDetail, ModbusHostActivity, Role } from '@/types/network'
 import { ROLE_LABELS, ASSIGNABLE_ROLES, effectiveLevel, hostLabel } from '@/types/network'
@@ -13,6 +14,7 @@ import SelectMenu from './ui/SelectMenu.vue'
 import WriteBadge from './ui/WriteBadge.vue'
 
 const topology = useTopologyStore()
+const appStore = useAppStore()
 const { getHostDetail, getModbusHostActivity, setRoleOverride, setLevelOverride } = useTauri()
 
 const detail = ref<HostDetail | null>(null)
@@ -50,35 +52,47 @@ const levelOptions = computed(() => {
 })
 
 let requestSeq = 0
+
+/** Fetch the device. `silent` keeps the current content up while the next
+ *  arrives, for the once-a-second refresh during a live capture. */
+async function load(hostId: number | null, silent: boolean) {
+  if (hostId === null) {
+    detail.value = null
+    modbus.value = null
+    return
+  }
+  const seq = ++requestSeq
+  if (!silent) loading.value = true
+  error.value = null
+  try {
+    const result = await getHostDetail(hostId)
+    const activity = result.host.protocols.includes('modbus')
+      ? await getModbusHostActivity(hostId)
+      : null
+    if (seq !== requestSeq) return
+    detail.value = result
+    modbus.value = activity
+  } catch (e) {
+    if (seq !== requestSeq) return
+    detail.value = null
+    modbus.value = null
+    error.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    if (seq === requestSeq) loading.value = false
+  }
+}
+
 watch(
   () => topology.selectedNodeId,
-  async (hostId) => {
-    if (hostId === null) {
-      detail.value = null
-      modbus.value = null
-      return
-    }
-    const seq = ++requestSeq
-    loading.value = true
-    error.value = null
-    try {
-      const result = await getHostDetail(hostId)
-      const activity = result.host.protocols.includes('modbus')
-        ? await getModbusHostActivity(hostId)
-        : null
-      if (seq !== requestSeq) return
-      detail.value = result
-      modbus.value = activity
-    } catch (e) {
-      if (seq !== requestSeq) return
-      detail.value = null
-      modbus.value = null
-      error.value = e instanceof Error ? e.message : String(e)
-    } finally {
-      if (seq === requestSeq) loading.value = false
-    }
-  },
+  (hostId) => load(hostId, false),
   { immediate: true },
+)
+
+watch(
+  () => appStore.liveTick,
+  () => {
+    if (topology.selectedNodeId !== null) void load(topology.selectedNodeId, true)
+  },
 )
 
 async function onRoleChange(value: string) {

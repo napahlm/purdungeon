@@ -38,3 +38,20 @@ export function formatCadence(ms: number): string {
   if (ms < 1000) return `${ms.toFixed(0)} ms`
   return `${(ms / 1000).toFixed(1)} s`
 }
+
+/** Packets per second, for the live counters. */
+export function formatRate(pps: number): string {
+  if (pps >= 10000) return `${(pps / 1000).toFixed(1)}k pkt/s`
+  if (pps >= 100) return `${Math.round(pps)} pkt/s`
+  return `${pps.toFixed(1)} pkt/s`
+}
+
+/** Elapsed seconds as `m:ss` or `h:mm:ss`. */
+export function formatElapsed(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds))
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const rest = s % 60
+  const mm = h > 0 ? String(m).padStart(2, '0') : String(m)
+  return `${h > 0 ? `${h}:` : ''}${mm}:${String(rest).padStart(2, '0')}`
+}
