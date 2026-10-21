@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import Konva from 'konva'
 import { useCanvas } from '@/composables/useCanvas'
 import { useTopologyStore } from '@/stores/topology'
@@ -199,6 +199,8 @@ const nodeCallbacks = {
   onDragMove(hostId: number, x: number, y: number) {
     topology.moveNode(hostId, x, y)
     updateLinksFor(hostId)
+    const node = topology.nodesByHostId.get(hostId)
+    return node ? { x: node.x, y: node.y } : { x, y }
   },
   onDragEnd(hostId: number, x: number, y: number) {
     // Position saving is a convenience, not critical state - don't interrupt
@@ -340,7 +342,25 @@ function updateStyles() {
 
 // The findings panel overlays the canvas on the left; frame content into
 // the clear area beside it (narrower when it's collapsed to the rail).
+// The canvas stays mounted behind the capture tab (v-show), where it has no
+// size: a fit requested then would frame nothing. Hold it until the canvas
+// is visible again.
+let pendingFit = false
+let fitObserver: ResizeObserver | null = null
+
 function fitView() {
+  const el = containerRef.value
+  const s = stage.value
+  if (!el || !s) return
+  if (el.clientWidth === 0 || el.clientHeight === 0) {
+    pendingFit = true
+    return
+  }
+  pendingFit = false
+  // useCanvas resizes the stage from its own observer; make sure the fit
+  // sees the current size whichever observer ran first.
+  s.width(el.clientWidth)
+  s.height(el.clientHeight)
   const { minX, maxX, height } = contentBounds()
   fitToContent(
     {
@@ -365,6 +385,15 @@ onMounted(() => {
   renderedVersion = topology.layoutVersion
   syncGraph()
   fitView()
+  fitObserver = new ResizeObserver(() => {
+    if (pendingFit) fitView()
+  })
+  if (containerRef.value) fitObserver.observe(containerRef.value)
+})
+
+onUnmounted(() => {
+  fitObserver?.disconnect()
+  fitObserver = null
 })
 
 // Reconcile when the visible graph changes (filters, timeline, overrides)
@@ -414,7 +443,7 @@ watch(
   () => updateStyles(),
 )
 watch(
-  () => topology.activeFindingId,
+  () => topology.activeFindingKey,
   () => updateStyles(),
 )
 

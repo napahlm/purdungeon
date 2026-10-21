@@ -20,6 +20,23 @@ export const useTimelineStore = defineStore('timeline', () => {
     filtering.value = false
   }
 
+  /**
+   * The capture grew (live traffic arrived): widen the range without losing
+   * a window the user set. With no window set, the view follows the live
+   * edge; with one, it is only clamped into the new range.
+   */
+  function extendFullRange(start: number, end: number) {
+    fullRange.value = { start, end }
+    if (!filtering.value) {
+      filterRange.value = { start, end }
+      return
+    }
+    filterRange.value = {
+      start: Math.max(filterRange.value.start, start),
+      end: Math.min(filterRange.value.end, end),
+    }
+  }
+
   function setFilterRange(start: number, end: number) {
     filterRange.value = { start, end }
     filtering.value = start !== fullRange.value.start || end !== fullRange.value.end
@@ -43,6 +60,7 @@ export const useTimelineStore = defineStore('timeline', () => {
     filtering,
     histogram,
     setFullRange,
+    extendFullRange,
     setFilterRange,
     resetFilter,
     reset,

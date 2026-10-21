@@ -1,31 +1,39 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { useAppStore } from '@/stores/app'
+import { useAppStore, type AppView } from '@/stores/app'
 import { useTopologyStore } from '@/stores/topology'
 import { useTimelineStore } from '@/stores/timeline'
+import { useCaptureStore } from '@/stores/capture'
 import { useTauri } from '@/composables/useTauri'
 import { modKeyLabel } from '@/ui/platform'
+import { formatRate } from '@/utils/format'
 import { describeLinkLayer, describeSkipped, linkLayerTotal, totalSkipped } from '@/utils/skipped'
 
 const appStore = useAppStore()
 const topologyStore = useTopologyStore()
 const timelineStore = useTimelineStore()
-const { pickAndLoadFiles } = useTauri()
+const captureStore = useCaptureStore()
+const { pickAndLoadFiles, closeSession } = useTauri()
 
 const showSources = ref(false)
 
+const VIEWS: { id: AppView; label: string }[] = [
+  { id: 'topology', label: 'Topology' },
+  { id: 'capture', label: 'Capture' },
+]
+
 // What the parser read but could not decode, by reason, so "why is my
 // network so small?" has an answer right in the header.
-const skippedTotal = computed(() => totalSkipped(appStore.skipped))
+const skippedTotal = computed(() => totalSkipped(appStore.totalSkipped))
 const skippedTitle = computed(
-  () => `Read but not decoded:\n${describeSkipped(appStore.skipped).join('\n')}`,
+  () => `Read but not decoded:\n${describeSkipped(appStore.totalSkipped).join('\n')}`,
 )
 
 // Link-layer announcements are decoded but draw no links; say so plainly.
-const linkLayerCount = computed(() => linkLayerTotal(appStore.decoded))
+const linkLayerCount = computed(() => linkLayerTotal(appStore.totalDecoded))
 const linkLayerTitle = computed(
   () =>
-    `${describeLinkLayer(appStore.decoded)}. ARP announcements add devices to the asset list; ` +
+    `${describeLinkLayer(appStore.totalDecoded)}. ARP announcements add devices to the asset list; ` +
     'LLDP and CDP are counted now and will drive switch discovery in a later release. ' +
     'These frames carry no IP conversation, so they draw no links.',
 )
@@ -35,14 +43,36 @@ function fileName(path: string): string {
   return path.split(sep).pop() ?? path
 }
 
+function sourceLabel(source: { label: string; kind: 'file' | 'live' }): string {
+  return source.kind === 'live' ? `live: ${source.label}` : fileName(source.label)
+}
+
+/** The session's name in the header: its first file, or its interface. */
+const sessionLabel = computed(() => {
+  if (appStore.sessionName === null) return ''
+  return appStore.sessionKind === 'live'
+    ? `live: ${appStore.sessionName}`
+    : fileName(appStore.sessionName)
+})
+
+const liveRate = computed(() => captureStore.status?.pps ?? 0)
+
 async function addFiles() {
   await pickAndLoadFiles()
 }
 
-function closeCapture() {
+async function closeCapture() {
   showSources.value = false
+  // The backend stops any capture and removes its spool and database;
+  // the stores forget the view either way.
+  try {
+    await closeSession()
+  } catch (e) {
+    console.warn('close_session failed', e)
+  }
   topologyStore.reset()
   timelineStore.reset()
+  captureStore.reset()
   appStore.reset()
 }
 </script>
@@ -51,11 +81,37 @@ function closeCapture() {
   <header
     class="relative flex h-11 shrink-0 items-center justify-between border-b border-border bg-bg-secondary px-4"
   >
-    <div class="flex items-baseline gap-4">
+    <div class="flex items-center gap-4">
       <span class="text-sm font-semibold tracking-tight text-text-primary">purdungeon</span>
-      <span v-if="appStore.loadedFile" class="flex items-baseline gap-1.5 text-xs text-text-muted">
-        <!-- Single capture: just its name. Several: a count that opens the list. -->
-        <span v-if="appStore.sources.length <= 1">{{ fileName(appStore.loadedFile) }}</span>
+
+      <!-- View switcher: the Purdue topology, or the live packet list -->
+      <div class="flex items-center gap-0.5 rounded-lg border border-border bg-bg-primary/60 p-0.5">
+        <button
+          v-for="view in VIEWS"
+          :key="view.id"
+          class="flex items-center gap-1.5 rounded-md px-2.5 py-0.5 text-xs transition-colors"
+          :class="
+            appStore.activeView === view.id
+              ? 'bg-bg-elevated text-text-primary'
+              : 'text-text-muted hover:text-text-secondary'
+          "
+          @click="appStore.activeView = view.id"
+        >
+          {{ view.label }}
+          <span
+            v-if="view.id === 'capture' && captureStore.running"
+            class="inline-block h-1.5 w-1.5 rounded-full bg-alert"
+            title="Capturing"
+          />
+        </button>
+      </div>
+
+      <span
+        v-if="appStore.sessionName !== null"
+        class="flex items-baseline gap-1.5 text-xs text-text-muted"
+      >
+        <!-- Single source: just its name. Several: a count that opens the list. -->
+        <span v-if="appStore.sources.length <= 1" class="font-mono">{{ sessionLabel }}</span>
         <button
           v-else
           class="text-text-secondary transition-colors hover:text-text-primary"
@@ -63,6 +119,10 @@ function closeCapture() {
         >
           {{ appStore.sources.length }} captures ▾
         </button>
+        <template v-if="captureStore.running">
+          <span class="mx-1.5 text-border-strong">·</span>
+          <span class="tabular-nums text-text-secondary">{{ formatRate(liveRate) }}</span>
+        </template>
         <span class="mx-1.5 text-border-strong">·</span>
         {{ topologyStore.nodes.length }} devices
         <span class="mx-1.5 text-border-strong">·</span>
@@ -82,16 +142,21 @@ function closeCapture() {
       </span>
     </div>
     <div class="flex items-center gap-1">
-      <span class="mr-2 hidden text-xs text-text-muted sm:inline"
+      <span
+        v-if="appStore.activeView === 'topology'"
+        class="mr-2 hidden text-xs text-text-muted sm:inline"
         >{{ modKeyLabel }} K to search</span
       >
       <button
-        class="rounded-md px-2.5 py-1 text-xs text-text-secondary transition-colors hover:bg-bg-elevated hover:text-text-primary"
+        class="rounded-md px-2.5 py-1 text-xs text-text-secondary transition-colors hover:bg-bg-elevated hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+        :disabled="captureStore.running"
+        :title="captureStore.running ? 'Stop the capture before adding files' : 'Add capture files'"
         @click="addFiles"
       >
         Add…
       </button>
       <button
+        v-if="appStore.sessionName !== null"
         class="rounded-md px-2.5 py-1 text-xs text-text-secondary transition-colors hover:bg-bg-elevated hover:text-text-primary"
         @click="closeCapture"
       >
@@ -113,7 +178,7 @@ function closeCapture() {
           :key="i"
           class="flex items-center justify-between gap-3 rounded-md px-2 py-1.5 text-sm"
         >
-          <span class="truncate font-mono text-xs text-text-primary">{{ fileName(src.path) }}</span>
+          <span class="truncate font-mono text-xs text-text-primary">{{ sourceLabel(src) }}</span>
           <span class="shrink-0 text-xs tabular-nums text-text-muted"
             >{{ src.packets.toLocaleString() }} pkts</span
           >

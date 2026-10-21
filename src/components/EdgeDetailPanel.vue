@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue'
 import { useTopologyStore } from '@/stores/topology'
+import { useAppStore } from '@/stores/app'
 import { useTauri } from '@/composables/useTauri'
 import { hostLabel, type ModbusConversation } from '@/types/network'
 import { formatBytes, formatTime, formatCadence } from '@/utils/format'
@@ -11,6 +12,7 @@ import CrossZoneBadge from './ui/CrossZoneBadge.vue'
 import WriteBadge from './ui/WriteBadge.vue'
 
 const topology = useTopologyStore()
+const appStore = useAppStore()
 const { getModbusConversation } = useTauri()
 
 const modbus = ref<ModbusConversation | null>(null)
@@ -40,26 +42,40 @@ const dstHost = computed(
 )
 
 let requestSeq = 0
-watch(
-  () => topology.selectedEdgeId,
-  async (edgeId) => {
-    const seq = ++requestSeq
+
+/** Fetch the Modbus depth. `silent` keeps what is shown while the next
+ *  arrives, for the once-a-second refresh during a live capture. */
+async function load(edgeId: number | null, silent: boolean) {
+  const seq = ++requestSeq
+  if (!silent) {
     modbus.value = null
     loading.value = false
-    if (edgeId === null) return
-    if (connection.value?.app_protocol !== 'modbus') return
-    loading.value = true
-    try {
-      const result = await getModbusConversation(edgeId)
-      if (seq === requestSeq) modbus.value = result
-    } catch (e) {
-      // Traffic stats still show; only the Modbus depth is unavailable.
-      console.error('modbus conversation unavailable', e)
-    } finally {
-      if (seq === requestSeq) loading.value = false
-    }
-  },
+  }
+  if (edgeId === null) return
+  if (connection.value?.app_protocol !== 'modbus') return
+  if (!silent) loading.value = true
+  try {
+    const result = await getModbusConversation(edgeId)
+    if (seq === requestSeq) modbus.value = result
+  } catch (e) {
+    // Traffic stats still show; only the Modbus depth is unavailable.
+    console.error('modbus conversation unavailable', e)
+  } finally {
+    if (seq === requestSeq) loading.value = false
+  }
+}
+
+watch(
+  () => topology.selectedEdgeId,
+  (edgeId) => load(edgeId, false),
   { immediate: true },
+)
+
+watch(
+  () => appStore.liveTick,
+  () => {
+    if (topology.selectedEdgeId !== null) void load(topology.selectedEdgeId, true)
+  },
 )
 
 function close() {

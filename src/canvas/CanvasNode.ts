@@ -156,7 +156,8 @@ function makeLabel(node: CanvasNode): Konva.Group {
 export function createNodeGroup(
   node: CanvasNode,
   callbacks: {
-    onDragMove: (hostId: number, x: number, y: number) => void
+    /** Returns where the node ended up, which the store may have clamped. */
+    onDragMove: (hostId: number, x: number, y: number) => { x: number; y: number }
     onDragEnd: (hostId: number, x: number, y: number) => void
     onClick: (hostId: number) => void
   },
@@ -185,20 +186,24 @@ export function createNodeGroup(
   if (glyph) group.add(glyph)
   group.add(makeLabel(node))
 
+  // Only the id is captured: the store's node object for this host can be
+  // replaced by a later import, and reading a stale one here would snap the
+  // group back to wherever that object last was.
+  const hostId = node.host.id
   group.on('dragmove', () => {
-    callbacks.onDragMove(node.host.id, group.x(), group.y())
     // The store may clamp y to the band; reflect it immediately
-    group.x(node.x)
-    group.y(node.y)
+    const clamped = callbacks.onDragMove(hostId, group.x(), group.y())
+    group.x(clamped.x)
+    group.y(clamped.y)
   })
 
   group.on('dragend', () => {
-    callbacks.onDragEnd(node.host.id, group.x(), group.y())
+    callbacks.onDragEnd(hostId, group.x(), group.y())
   })
 
   group.on('click tap', (e) => {
     e.cancelBubble = true
-    callbacks.onClick(node.host.id)
+    callbacks.onClick(hostId)
   })
 
   group.on('mouseenter', () => {

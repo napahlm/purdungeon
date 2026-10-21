@@ -1,13 +1,17 @@
 <script setup lang="ts">
 import { ref, watch, onMounted, onUnmounted } from 'vue'
 import { useTopologyStore } from '@/stores/topology'
+import { useAppStore } from '@/stores/app'
 
 const topology = useTopologyStore()
+const appStore = useAppStore()
 const visible = ref(false)
 const inputRef = ref<HTMLInputElement | null>(null)
 const query = ref('')
 
 function onKeydown(e: KeyboardEvent) {
+  // Search is about the topology; on the capture tab the shortcut is free.
+  if (appStore.activeView !== 'topology') return
   if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
     e.preventDefault()
     visible.value = !visible.value

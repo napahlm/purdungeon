@@ -58,6 +58,13 @@ const hovering = computed(() => appStore.dragHovering)
         >
           Open the sample captures
         </button>
+        <span class="mx-1.5 text-border-strong">·</span>
+        <button
+          class="text-accent underline decoration-accent/40 underline-offset-2 transition-colors hover:text-text-primary"
+          @click="appStore.activeView = 'capture'"
+        >
+          Capture live traffic
+        </button>
       </p>
     </div>
   </div>
